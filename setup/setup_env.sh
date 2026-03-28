@@ -18,10 +18,12 @@ PY
 python -m pip uninstall -y \
   brax \
   chex \
+  contact-predictive-world-models \
   dm-sonnet \
   distrax \
   flax \
   gymnax \
+  humanoid-bench \
   jax \
   jaxlib \
   jax-cuda12-pjrt \
