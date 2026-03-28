@@ -16,8 +16,12 @@ PY
 # preinstalled. Remove the overlapping packages first so the pinned project
 # environment is resolved from a clean slate.
 python -m pip uninstall -y \
+  brax \
   chex \
   dm-sonnet \
+  distrax \
+  flax \
+  gymnax \
   jax \
   jaxlib \
   jax-cuda12-pjrt \
