@@ -12,6 +12,23 @@ if sys.version_info[:2] != (3, 11):
     raise SystemExit(f"Python 3.11 is required, found {sys.version.split()[0]}")
 PY
 
+# Cloud images often come with a partially incompatible JAX/TensorFlow stack
+# preinstalled. Remove the overlapping packages first so the pinned project
+# environment is resolved from a clean slate.
+python -m pip uninstall -y \
+  chex \
+  dm-sonnet \
+  jax \
+  jaxlib \
+  jax-cuda12-pjrt \
+  jax-cuda12-plugin \
+  ml-dtypes \
+  optax \
+  orbax-checkpoint \
+  orbax-export \
+  tensorflow \
+  tensorflow-probability || true
+
 python -m pip install --upgrade pip setuptools wheel
 
 case "$JAX_TARGET" in
@@ -29,3 +46,4 @@ esac
 
 python -m pip install -r requirements.txt
 python -m pip install -e . --no-deps
+python -m pip check
