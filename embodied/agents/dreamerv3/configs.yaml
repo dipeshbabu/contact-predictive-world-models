@@ -51,7 +51,7 @@ defaults:
     log_episode_timeout: 60
     wandb: False
     wandb_entity: robot-learning
-    wandb_project: humanoid-bench
+    wandb_project: contact-predictive-world-models
     from_checkpoint: ''
     actor_addr: 'tcp://localhost:{random}'
     replay_addr: 'ipc:///tmp/replay{random}'

@@ -45,8 +45,8 @@ Robustness evaluation:
 Create the environment:
 
 ```bash
-conda create -n humanoidbench python=3.11 -y
-conda activate humanoidbench
+conda create -n cpwm python=3.11 -y
+conda activate cpwm
 ```
 
 CPU install:
