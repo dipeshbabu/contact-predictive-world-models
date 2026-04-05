@@ -122,6 +122,17 @@ if [[ "$DRY_RUN" != "1" ]]; then
   python cpwm/analysis_contact_probe.py \
     --csv "${RESULTS_CSV}" \
     --out "${ANALYSIS_CSV}" || { echo "[ANALYSIS FAIL]"; FAILS=$((FAILS+1)); }
+
+  [[ -s "${RESULTS_CSV}" ]] || { echo "[MISSING RESULTS CSV] ${RESULTS_CSV}"; FAILS=$((FAILS+1)); }
+  [[ -f "${ANALYSIS_CSV}" ]] || { echo "[MISSING ANALYSIS CSV] ${ANALYSIS_CSV}"; FAILS=$((FAILS+1)); }
+
+  shopt -s nullglob
+  fig_files=("${FIGS_DIR}"/*.png)
+  shopt -u nullglob
+  if [[ ${#fig_files[@]} -eq 0 ]]; then
+    echo "[MISSING FIGURES] ${FIGS_DIR}"
+    FAILS=$((FAILS+1))
+  fi
 else
   echo "[DRY RUN] skipping plot and analysis generation"
 fi
@@ -133,6 +144,10 @@ if [[ "$DRY_RUN" != "1" ]]; then
   ls -lh "${FIGS_DIR}" || true
 else
   echo "[DRY RUN] result files are not created"
+fi
+
+if [[ "$FAILS" -ne 0 ]]; then
+  exit 1
 fi
 
 exit 0
