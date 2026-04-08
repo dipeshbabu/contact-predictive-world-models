@@ -57,20 +57,33 @@ def _find_checkpoint(run_dir: Path) -> Path:
 
 def _append_csv(path: Path, row: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    exists = path.exists()
+    existed_before = path.exists()
+    rows = []
     fieldnames = list(row.keys())
+    rewrite = False
+    existing_fieldnames = []
 
-    if exists:
+    if existed_before:
         with path.open("r", newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-        if header and set(header) >= set(fieldnames):
-            fieldnames = header
+            reader = csv.DictReader(f)
+            existing_fieldnames = reader.fieldnames or []
+            rows = list(reader)
+        if existing_fieldnames:
+            missing = [name for name in fieldnames if name not in existing_fieldnames]
+            if missing:
+                fieldnames = [*existing_fieldnames, *missing]
+                rewrite = True
+            else:
+                fieldnames = existing_fieldnames
 
-    with path.open("a", newline="", encoding="utf-8") as f:
+    mode = "w" if rewrite else "a"
+    with path.open(mode, newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not exists:
+        if mode == "w" or not existed_before or not existing_fieldnames:
             writer.writeheader()
+        if rewrite:
+            for old_row in rows:
+                writer.writerow(old_row)
         writer.writerow(row)
 
 
@@ -91,6 +104,8 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=20000)
     ap.add_argument("--noise", type=float, default=0.0)
     ap.add_argument("--tactile_dropout", type=float, default=0.0)
+    ap.add_argument("--mass_scale", type=float, default=1.0)
+    ap.add_argument("--friction_scale", type=float, default=1.0)
     ap.add_argument("--results_csv", default="outputs/results/results.csv")
     ap.add_argument("--env", default=None)
     ap.add_argument("--seed", type=int, default=None)
@@ -113,7 +128,7 @@ def main() -> None:
     if run_config.get("tactile_aux_weight", 0.0) > 0:
         variant = "aux"
 
-    m = re.match(r"(.+?)_([A-Za-z0-9]+)_s(\d+)$", run_dir.name)
+    m = re.match(r"(.+?)_([A-Za-z0-9_]+)_s(\d+)$", run_dir.name)
     if m:
         if env is None:
             env = m.group(1)
@@ -133,7 +148,10 @@ def main() -> None:
         if not args.dry_run:
             raise
         ckpt = run_dir / "checkpoint.ckpt"
-    eval_dir = run_dir / "eval" / f"noise{args.noise}_drop{args.tactile_dropout}"
+    eval_dir = run_dir / "eval" / (
+        f"noise{args.noise}_drop{args.tactile_dropout}"
+        f"_mass{args.mass_scale}_fric{args.friction_scale}"
+    )
 
     env_vars = os.environ.copy()
     repo_root = Path(__file__).resolve().parent.parent
@@ -172,6 +190,8 @@ def main() -> None:
         "--env.humanoid.tactile_concat", tactile_concat,
         "--env.humanoid.proprio_noise", str(args.noise),
         "--env.humanoid.tactile_dropout", str(args.tactile_dropout),
+        "--env.humanoid.mass_scale", str(args.mass_scale),
+        "--env.humanoid.friction_scale", str(args.friction_scale),
         "--run.from_checkpoint", str(ckpt),
     ]
 
@@ -200,6 +220,8 @@ def main() -> None:
         "eval_steps": args.steps,
         "proprio_noise": args.noise,
         "tactile_dropout": args.tactile_dropout,
+        "mass_scale": args.mass_scale,
+        "friction_scale": args.friction_scale,
         "success": success if success is not None else "",
         "score": score if score is not None else "",
         "ep_length": length if length is not None else "",

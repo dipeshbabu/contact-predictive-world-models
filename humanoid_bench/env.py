@@ -27,6 +27,7 @@ from .envs.door import Door
 from .envs.push import Push
 from .envs.cabinet import Cabinet
 from .envs.insert import Insert
+from .envs.locomotion import Walk, Run
 from .robots import H1Touch
 
 DEFAULT_CAMERA_CONFIG = {
@@ -39,6 +40,8 @@ DEFAULT_RANDOMNESS = 0.01
 
 ROBOTS = {"h1touch": H1Touch}
 TASKS = {
+    "walk": Walk,
+    "run": Run,
     "door": Door,
     "push": Push,
     "cabinet": Cabinet,
@@ -93,6 +96,9 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
         if not isinstance(self.small_obs, bool):
             self.small_obs = str(self.small_obs).lower() == "true"
 
+        self.mass_scale = float(kwargs.get("mass_scale", 1.0) or 1.0)
+        self.friction_scale = float(kwargs.get("friction_scale", 1.0) or 1.0)
+
         MujocoEnv.__init__(
             self,
             model_path,
@@ -104,6 +110,13 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             height=height,
             camera_name=task_info.camera_name,
         )
+
+        self._default_body_mass = self.model.body_mass.copy()
+        self._default_geom_friction = self.model.geom_friction.copy()
+        if self.mass_scale != 1.0:
+            self.model.body_mass[:] = self._default_body_mass * self.mass_scale
+        if self.friction_scale != 1.0:
+            self.model.geom_friction[:] = self._default_geom_friction * self.friction_scale
 
         self.action_high = self.action_space.high
         self.action_low = self.action_space.low
@@ -188,4 +201,3 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
 
     def render(self):
         return self.task.render()
-

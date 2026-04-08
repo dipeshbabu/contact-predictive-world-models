@@ -74,7 +74,7 @@ defaults:
     minecraft: {size: [64, 64], break_speed: 100.0, logs: False}
     dmc: {size: [64, 64], repeat: 2, camera: -1}
     loconav: {size: [64, 64], repeat: 2, camera: -1}
-    humanoid: {obs_key: vector, obs_wrapper: false, policy_path: "", mean_path: "", var_path: "", policy_type: "", small_obs: "", is_eval: False, actuation: position, sensors: "", tactile_flat: false, tactile_concat: false, proprio_noise: 0.0, tactile_dropout: 0.0, reward_dict: {hand_dist: 0.1, target_dist: 0.1, success: 10, terminate: False}}
+    humanoid: {obs_key: vector, obs_wrapper: false, policy_path: "", mean_path: "", var_path: "", policy_type: "", small_obs: "", is_eval: False, actuation: position, sensors: "", tactile_flat: false, tactile_concat: false, proprio_noise: 0.0, tactile_dropout: 0.0, mass_scale: 1.0, friction_scale: 1.0, reward_dict: {hand_dist: 0.1, target_dist: 0.1, success: 10, terminate: False}}
 
   # Agent
   task_behavior: Greedy

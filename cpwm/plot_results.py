@@ -38,11 +38,22 @@ def main():
             r["success_f"] = _to_float(r.get("success", ""))
             r["noise_f"] = _to_float(r.get("proprio_noise", "0"))
             r["drop_f"] = _to_float(r.get("tactile_dropout", "0"))
-            if r["success_f"] is None or r["noise_f"] is None or r["drop_f"] is None:
+            r["mass_f"] = _to_float(r.get("mass_scale", "1"))
+            r["fric_f"] = _to_float(r.get("friction_scale", "1"))
+            if (
+                r["success_f"] is None
+                or r["noise_f"] is None
+                or r["drop_f"] is None
+                or r["mass_f"] is None
+                or r["fric_f"] is None
+            ):
                 continue
             rows.append(r)
 
-    clean = [r for r in rows if abs(r["noise_f"]) < 1e-12 and abs(r["drop_f"]) < 1e-12]
+    sensory_rows = [
+        r for r in rows if abs(r["mass_f"] - 1.0) < 1e-12 and abs(r["fric_f"] - 1.0) < 1e-12
+    ]
+    clean = [r for r in sensory_rows if abs(r["noise_f"]) < 1e-12 and abs(r["drop_f"]) < 1e-12]
     if clean:
         agg = defaultdict(list)
         for r in clean:
@@ -72,7 +83,7 @@ def main():
         plt.close()
 
     by_ev = defaultdict(list)
-    for r in rows:
+    for r in sensory_rows:
         by_ev[(r["env"], r["variant"])].append(r)
 
     for (env, variant), rs in by_ev.items():

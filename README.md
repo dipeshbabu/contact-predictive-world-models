@@ -4,13 +4,16 @@ Contact-predictive multimodal world model reinforcement learning for partially o
 
 ## Overview
 
-This repo studies whether a contact-predictive auxiliary objective improves tactile world-model learning on contact-rich H1Touch manipulation tasks.
+This repo studies whether a contact-predictive auxiliary objective improves tactile world-model learning on H1Touch locomotion and manipulation tasks.
 
 Core comparison:
+- PPO proprio-only baseline
 - Dreamer tactile baseline
 - Dreamer tactile + contact-predictive auxiliary loss
 
 Active tasks:
+- `h1touch-walk-v0`
+- `h1touch-run-v0`
 - `h1touch-push-v0`
 - `h1touch-door-v0`
 - `h1touch-cabinet-v0`
@@ -19,6 +22,8 @@ Active tasks:
 Robustness evaluation:
 - proprioceptive noise
 - tactile dropout
+- mild dynamics variation via mass scaling
+- mild dynamics variation via friction scaling
 
 ## Repo Layout
 
@@ -27,8 +32,12 @@ Robustness evaluation:
  cpwm/
     train_dreamer.py
     eval_dreamer.py
+    train_ppo.py
+    eval_ppo.py
     plot_results.py
     analysis_contact_probe.py
+    analysis_tactile_error.py
+    analysis_dynamics_summary.py
  embodied/
  humanoid_bench/
  outputs/
@@ -78,13 +87,17 @@ export PYOPENGL_PLATFORM=egl
 `run_debug.sh` is the bounded smoke test. It is the first script you should run after setup.
 
 Default debug run:
-- task: `h1touch-door-v0`
+- Dreamer tasks: `h1touch-walk-v0` and `h1touch-door-v0`
+- PPO tasks: `h1touch-walk-v0` and `h1touch-door-v0`
 - seed: `0`
-- variants: `base` and `aux`
-- train steps: `20000`
-- eval steps: `2000`
-- clean eval only
-- expected wall-clock: about 30 to 60 minutes on a single GPU
+- variants: Dreamer `base` and `aux`, plus PPO proprio-only
+- Dreamer train steps: `10000`
+- PPO train steps: `5000`
+- Dreamer eval steps: `1000`
+- PPO eval episodes: `3`
+- sensory checks: clean plus one noisy/dropout setting
+- dynamics checks: clean plus one mass/friction perturbation setting
+- expected wall-clock: about 30 minutes or less on a single GPU
 
 Dry-run command wiring check:
 
@@ -101,21 +114,25 @@ bash run_debug.sh
 Useful debug overrides:
 
 ```bash
-TRAIN_STEPS=10000 EVAL_STEPS=1000 bash run_debug.sh
-TASKS="h1touch-push-v0" bash run_debug.sh
+DREAMER_TASKS="h1touch-push-v0" PPO_TASKS="h1touch-push-v0" bash run_debug.sh
+TRAIN_STEPS=5000 PPO_TRAIN_STEPS=2000 EVAL_STEPS=500 bash run_debug.sh
 SEEDS="0" bash run_debug.sh
 NUM_ENVS=1 bash run_debug.sh
+RUN_PPO=0 bash run_debug.sh
+RUN_DYNAMICS=0 bash run_debug.sh
 ```
 
 Debug outputs go to:
 - `outputs/runs_debug/`
 - `outputs/results/results_debug.csv`
 - `outputs/results/contact_analysis_debug.csv`
+- `outputs/results/tactile_error_vs_success_debug.csv`
+- `outputs/results/dynamics_summary_debug.csv`
 - `outputs/figs_debug/`
 
 ## Full Run
 
-Run the full pipeline:
+Run the full proposal-complete pipeline:
 
 ```bash
 bash run_all.sh
@@ -124,17 +141,27 @@ bash run_all.sh
 Useful overrides:
 
 ```bash
-TASKS="h1touch-door-v0 h1touch-push-v0" bash run_all.sh
+DREAMER_TASKS="h1touch-walk-v0 h1touch-door-v0" PPO_TASKS="h1touch-walk-v0 h1touch-door-v0" bash run_all.sh
 SEEDS="0 1" bash run_all.sh
-TRAIN_STEPS=500000 EVAL_STEPS=5000 bash run_all.sh
+TRAIN_STEPS=500000 PPO_TRAIN_STEPS=200000 EVAL_STEPS=5000 PPO_EVAL_EPISODES=5 bash run_all.sh
 NUM_ENVS=2 bash run_all.sh
+RUN_PPO=0 bash run_all.sh
+RUN_DYNAMICS=0 bash run_all.sh
 DRY_RUN=1 bash run_all.sh
 ```
 
 Main outputs:
 - `outputs/results/results.csv`
 - `outputs/results/contact_analysis.csv`
+- `outputs/results/tactile_error_vs_success.csv`
+- `outputs/results/dynamics_summary.csv`
 - `outputs/figs/`
+
+Default full-run coverage:
+- Dreamer base and auxiliary models on all 6 tasks
+- sensory sweeps across `NOISES x DROPS`
+- dynamics sweeps across `MASS_SCALES x FRICTION_SCALES` when `RUN_DYNAMICS=1`
+- PPO proprio-only baseline on all 6 tasks when `RUN_PPO=1`
 
 ## Manual Commands
 
@@ -169,17 +196,57 @@ python cpwm/eval_dreamer.py \
   --run_dir outputs/runs/h1touch-door-v0_aux_s0 \
   --steps 20000 \
   --noise 0.0 \
-  --tactile_dropout 0.0
+  --tactile_dropout 0.0 \
+  --mass_scale 1.0 \
+  --friction_scale 1.0
 ```
 
-Evaluate robustness:
+Evaluate sensory robustness:
 
 ```bash
 python cpwm/eval_dreamer.py \
   --run_dir outputs/runs/h1touch-door-v0_aux_s0 \
   --steps 20000 \
   --noise 0.02 \
-  --tactile_dropout 0.2
+  --tactile_dropout 0.2 \
+  --mass_scale 1.0 \
+  --friction_scale 1.0
+```
+
+Evaluate dynamics robustness:
+
+```bash
+python cpwm/eval_dreamer.py \
+  --run_dir outputs/runs/h1touch-door-v0_aux_s0 \
+  --steps 20000 \
+  --noise 0.0 \
+  --tactile_dropout 0.0 \
+  --mass_scale 1.1 \
+  --friction_scale 0.8
+```
+
+Train PPO baseline:
+
+```bash
+python cpwm/train_ppo.py \
+  --env h1touch-walk-v0 \
+  --seed 0 \
+  --steps 1000000 \
+  --logdir outputs/runs/h1touch-walk-v0_ppo_proprio_s0
+```
+
+Evaluate PPO baseline:
+
+```bash
+python cpwm/eval_ppo.py \
+  --run_dir outputs/runs/h1touch-walk-v0_ppo_proprio_s0 \
+  --env h1touch-walk-v0 \
+  --seed 0 \
+  --episodes 20 \
+  --noise 0.02 \
+  --tactile_dropout 0.2 \
+  --mass_scale 1.0 \
+  --friction_scale 1.0
 ```
 
 Generate plots:
@@ -198,9 +265,27 @@ python cpwm/analysis_contact_probe.py \
   --out outputs/results/contact_analysis.csv
 ```
 
+Generate tactile prediction error analysis:
+
+```bash
+python cpwm/analysis_tactile_error.py \
+  --runs_dir outputs/runs \
+  --results_csv outputs/results/results.csv \
+  --out_csv outputs/results/tactile_error_vs_success.csv \
+  --out_fig outputs/figs/tactile_error_vs_success.png
+```
+
+Generate dynamics summary:
+
+```bash
+python cpwm/analysis_dynamics_summary.py \
+  --csv outputs/results/results.csv \
+  --out outputs/results/dynamics_summary.csv
+```
+
 ## Notes
 
-- `run_all.sh` is the main experiment driver at the repo root.
+- `run_all.sh` is the main proposal-complete experiment driver at the repo root.
 - `run_debug.sh` is the bounded smoke test and should be used before a full run.
 - `embodied/` contains the Dreamer runtime used by train and eval.
 - `humanoid_bench/` contains the active H1Touch tasks, wrappers, and assets required by this repo.

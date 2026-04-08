@@ -26,3 +26,4 @@ msgpack==1.0.8
 pyzmq==26.0.3
 colored==2.2.4
 matplotlib==3.9.0
+stable-baselines3[extra]>=2.3.0
