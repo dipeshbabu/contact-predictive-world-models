@@ -187,7 +187,7 @@ for env in $DREAMER_TASKS; do
             eval_dreamer_one "$run_dir" "0.0" "0.0" "$mass" "$fric" || { echo "[DREAMER DYNAMICS FAIL] $run_dir mass=$mass fric=$fric"; FAILS=$((FAILS+1)); }
           done
         done
-      done
+      fi
     done
   done
 done

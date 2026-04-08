@@ -77,6 +77,7 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             model_path = f"envs/{robot}_{control}_{task}.xml"
         
         model_path = os.path.join(asset_path, model_path)
+        self.robot_name = robot
 
         self.robot = ROBOTS[robot](self)
         if isinstance(task, str):
@@ -159,7 +160,9 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
 
         # Keyframe
         self.keyframe = (
-            self.model.key(kwargs["keyframe"]).id if "keyframe" in kwargs else 0
+            self.model.key(kwargs["keyframe"]).id
+            if "keyframe" in kwargs
+            else (0 if self.model.nkey else None)
         )
 
         self.randomness = randomness
@@ -182,8 +185,17 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
         return self.task.step(action)
 
     def reset_model(self):
-        mujoco.mj_resetDataKeyframe(self.model, self.data, self.keyframe)
-        mujoco.mj_forward(self.model, self.data)
+        if self.keyframe is not None:
+            mujoco.mj_resetDataKeyframe(self.model, self.data, self.keyframe)
+            mujoco.mj_forward(self.model, self.data)
+        else:
+            init_qpos = self.model.qpos0.copy()
+            qpos0_robot = getattr(self.task, "qpos0_robot", {}).get(self.robot_name)
+            if qpos0_robot:
+                robot_qpos = np.fromstring(qpos0_robot, sep=" ")
+                if robot_qpos.size == self.model.nq:
+                    init_qpos = robot_qpos
+            self.set_state(init_qpos, np.zeros(self.model.nv))
 
         # Add randomness
         init_qpos = self.data.qpos.copy()
