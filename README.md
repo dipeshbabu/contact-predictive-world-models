@@ -138,6 +138,27 @@ Run the full proposal-complete pipeline:
 bash run_all.sh
 ```
 
+Two-person split wrappers:
+
+```bash
+bash run_all_half1.sh
+bash run_all_half2.sh
+```
+
+Default task split:
+- `run_all_half1.sh`: `h1touch-walk-v0 h1touch-push-v0 h1touch-cabinet-v0`
+- `run_all_half2.sh`: `h1touch-run-v0 h1touch-door-v0 h1touch-insert_small-v0`
+
+Each wrapper runs both:
+- Dreamer base and auxiliary training plus evaluation
+- PPO training plus evaluation
+- isolated output paths by default, so both people can run them concurrently in the same shared workspace
+
+```bash
+bash run_all_half1.sh
+bash run_all_half2.sh
+```
+
 Useful overrides:
 
 ```bash
