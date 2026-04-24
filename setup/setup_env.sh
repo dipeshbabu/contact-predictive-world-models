@@ -7,20 +7,31 @@ cd "$ROOT_DIR"
 JAX_TARGET="${1:-cpu}"
 INSTALLER="${CPWM_INSTALLER:-uv}"
 
+PYTHON_EXE="$(
+  python - <<'PY'
+import sys
+if sys.version_info[:2] != (3, 11):
+    raise SystemExit(f"Python 3.11 is required, found {sys.version.split()[0]}")
+print(sys.executable)
+PY
+)"
+
+echo "Using project Python: ${PYTHON_EXE}"
+
 case "$INSTALLER" in
   uv)
     if ! command -v uv >/dev/null 2>&1; then
       echo "uv is required by default. Install uv, or run with CPWM_INSTALLER=pip." >&2
       exit 1
     fi
-    PIP_INSTALL=(uv pip install)
-    PIP_UNINSTALL=(uv pip uninstall)
-    PIP_CHECK=(uv pip check)
+    PIP_INSTALL=(uv pip install --python "${PYTHON_EXE}")
+    PIP_UNINSTALL=(uv pip uninstall --python "${PYTHON_EXE}")
+    PIP_CHECK=(uv pip check --python "${PYTHON_EXE}")
     ;;
   pip)
-    PIP_INSTALL=(python -m pip install)
-    PIP_UNINSTALL=(python -m pip uninstall -y)
-    PIP_CHECK=(python -m pip check)
+    PIP_INSTALL=("${PYTHON_EXE}" -m pip install)
+    PIP_UNINSTALL=("${PYTHON_EXE}" -m pip uninstall -y)
+    PIP_CHECK=("${PYTHON_EXE}" -m pip check)
     ;;
   *)
     echo "CPWM_INSTALLER must be 'uv' or 'pip', found '$INSTALLER'" >&2
@@ -28,17 +39,11 @@ case "$INSTALLER" in
     ;;
 esac
 
-python - <<'PY'
-import sys
-if sys.version_info[:2] != (3, 11):
-    raise SystemExit(f"Python 3.11 is required, found {sys.version.split()[0]}")
-PY
-
-if ! python -m pip --version >/dev/null 2>&1; then
+if ! "${PYTHON_EXE}" -m pip --version >/dev/null 2>&1; then
   if command -v uv >/dev/null 2>&1; then
-    uv pip install pip setuptools wheel
+    uv pip install --python "${PYTHON_EXE}" pip setuptools wheel
   else
-    python -m ensurepip --upgrade
+    "${PYTHON_EXE}" -m ensurepip --upgrade
   fi
 fi
 
