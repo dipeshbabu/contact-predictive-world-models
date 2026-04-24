@@ -98,13 +98,13 @@ Default debug run:
 - PPO tasks: `h1touch-walk-v0` and `h1touch-door-v0`
 - seed: `0`
 - variants: Dreamer `base` and `aux`, plus PPO proprio-only
-- Dreamer train steps: `10000`
-- PPO train steps: `5000`
-- Dreamer eval steps: `1000`
-- PPO eval episodes: `3`
+- Dreamer train steps: `2000`
+- PPO train steps: `1000`
+- Dreamer eval steps: `200`
+- PPO eval episodes: `1`
 - sensory checks: clean plus one noisy/dropout setting
-- dynamics checks: clean plus one mass/friction perturbation setting
-- expected wall-clock: about 30 minutes or less on a single GPU
+- dynamics checks: disabled by default
+- expected wall-clock: a short smoke test on a single GPU
 
 Dry-run command wiring check:
 
@@ -122,11 +122,12 @@ Useful debug overrides:
 
 ```bash
 DREAMER_TASKS="h1touch-push-v0" PPO_TASKS="h1touch-push-v0" bash run_debug.sh
-TRAIN_STEPS=5000 PPO_TRAIN_STEPS=2000 EVAL_STEPS=500 bash run_debug.sh
+TRAIN_STEPS=5000 PPO_TRAIN_STEPS=2000 EVAL_STEPS=500 PPO_EVAL_EPISODES=2 bash run_debug.sh
 SEEDS="0" bash run_debug.sh
 NUM_ENVS=1 bash run_debug.sh
 RUN_PPO=0 bash run_debug.sh
 RUN_DYNAMICS=0 bash run_debug.sh
+RUN_DYNAMICS=1 bash run_debug.sh
 ```
 
 Debug outputs go to:
