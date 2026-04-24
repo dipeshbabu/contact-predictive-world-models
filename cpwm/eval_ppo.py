@@ -6,8 +6,6 @@ import csv
 from pathlib import Path
 from typing import Any, Dict
 
-import numpy as np
-
 
 def _append_csv(path: Path, row: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -97,6 +95,7 @@ def main() -> None:
         return
 
     from stable_baselines3 import PPO
+    import numpy as np
 
     model = PPO.load(str(model_path))
 
