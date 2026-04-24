@@ -54,7 +54,7 @@ Robustness evaluation:
 Create the environment with `uv`:
 
 ```bash
-uv venv --python 3.11 .venv
+uv venv --seed --python 3.11
 source .venv/bin/activate
 ```
 

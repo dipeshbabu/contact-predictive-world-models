@@ -34,6 +34,14 @@ if sys.version_info[:2] != (3, 11):
     raise SystemExit(f"Python 3.11 is required, found {sys.version.split()[0]}")
 PY
 
+if ! python -m pip --version >/dev/null 2>&1; then
+  if command -v uv >/dev/null 2>&1; then
+    uv pip install pip setuptools wheel
+  else
+    python -m ensurepip --upgrade
+  fi
+fi
+
 # Cloud images often come with a partially incompatible JAX/TensorFlow stack
 # preinstalled. Remove the overlapping packages first so the pinned project
 # environment is resolved from a clean slate.
