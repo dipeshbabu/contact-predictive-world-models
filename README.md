@@ -51,11 +51,11 @@ Robustness evaluation:
 
 ## Setup
 
-Create the environment:
+Create the environment with `uv`:
 
 ```bash
-conda create -n cpwm python=3.11 -y
-conda activate cpwm
+uv venv --python 3.11 .venv
+source .venv/bin/activate
 ```
 
 CPU install:
@@ -72,8 +72,15 @@ bash setup/setup_env.sh cuda12
 
 The setup script:
 - requires Python `3.11.x`
+- uses `uv pip` by default
 - installs pinned dependencies from `requirements.txt`
 - installs the repo in editable mode via `pyproject.toml`
+
+If `uv` is unavailable, you can use the slower pip fallback:
+
+```bash
+CPWM_INSTALLER=pip bash setup/setup_env.sh cpu
+```
 
 Headless rendering for remote Linux machines:
 

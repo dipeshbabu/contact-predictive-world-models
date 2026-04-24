@@ -5,6 +5,28 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 JAX_TARGET="${1:-cpu}"
+INSTALLER="${CPWM_INSTALLER:-uv}"
+
+case "$INSTALLER" in
+  uv)
+    if ! command -v uv >/dev/null 2>&1; then
+      echo "uv is required by default. Install uv, or run with CPWM_INSTALLER=pip." >&2
+      exit 1
+    fi
+    PIP_INSTALL=(uv pip install)
+    PIP_UNINSTALL=(uv pip uninstall)
+    PIP_CHECK=(uv pip check)
+    ;;
+  pip)
+    PIP_INSTALL=(python -m pip install)
+    PIP_UNINSTALL=(python -m pip uninstall -y)
+    PIP_CHECK=(python -m pip check)
+    ;;
+  *)
+    echo "CPWM_INSTALLER must be 'uv' or 'pip', found '$INSTALLER'" >&2
+    exit 1
+    ;;
+esac
 
 python - <<'PY'
 import sys
@@ -15,7 +37,7 @@ PY
 # Cloud images often come with a partially incompatible JAX/TensorFlow stack
 # preinstalled. Remove the overlapping packages first so the pinned project
 # environment is resolved from a clean slate.
-python -m pip uninstall -y \
+"${PIP_UNINSTALL[@]}" \
   brax \
   chex \
   contact-predictive-world-models \
@@ -35,14 +57,14 @@ python -m pip uninstall -y \
   tensorflow \
   tensorflow-probability || true
 
-python -m pip install --upgrade pip setuptools wheel
+"${PIP_INSTALL[@]}" --upgrade pip setuptools wheel
 
 case "$JAX_TARGET" in
   cpu)
-    python -m pip install "jax[cpu]==0.4.28"
+    "${PIP_INSTALL[@]}" "jax[cpu]==0.4.28"
     ;;
   cuda12|gpu)
-    python -m pip install "jax[cuda12]==0.4.28"
+    "${PIP_INSTALL[@]}" "jax[cuda12]==0.4.28"
     ;;
   *)
     echo "usage: bash setup/setup_env.sh [cpu|cuda12|gpu]" >&2
@@ -50,6 +72,6 @@ case "$JAX_TARGET" in
     ;;
 esac
 
-python -m pip install -r requirements.txt
-python -m pip install -e . --no-deps
-python -m pip check
+"${PIP_INSTALL[@]}" -r requirements.txt
+"${PIP_INSTALL[@]}" -e . --no-deps
+"${PIP_CHECK[@]}"
