@@ -16,7 +16,7 @@ def main() -> None:
     ap.add_argument("--num_envs", type=int, default=4)
     ap.add_argument("--tactile_aux_weight", type=float, default=0.0)
     ap.add_argument("--logdir", required=True)
-    ap.add_argument("--jax_platform", default="gpu")
+    ap.add_argument("--jax_platform", default="METAL")
     ap.add_argument("--use_rgb", action="store_true", help="Optional RGB mode if your env supports it")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()

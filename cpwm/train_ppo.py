@@ -66,12 +66,14 @@ def main() -> None:
         args.mass_scale,
         args.friction_scale,
     )
+    device = "cpu"
     model = PPO(
         "MlpPolicy",
         env,
         verbose=1,
         seed=args.seed,
         tensorboard_log=None,
+        device=device,
     )
     model.learn(total_timesteps=args.steps)
     model.save(str(logdir / "ppo_model"))

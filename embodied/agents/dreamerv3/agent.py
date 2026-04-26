@@ -167,7 +167,7 @@ class WorldModel(nj.Module):
         scales.update({k: mlp for k in self.heads["decoder"].mlp_keys})
         self.scales = scales
         if "tactile_aux" not in self.scales:
-            self.scales["tactile_aux"] = 1.0
+            self.scales["tactile_aux"] = float(self.config.tactile_aux_weight)
 
     def initial(self, batch_size):
         bs = batch_size

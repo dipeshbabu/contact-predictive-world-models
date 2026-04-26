@@ -118,7 +118,7 @@ defaults:
   actent: 3e-4
   talk_prior: False
   tactile_aux_weight: 0.0
-  tactile_aux_head: {layers: 2, units: 256, dist: mse, act: silu, norm: layer}
+  tactile_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
 
   # Exploration
   expl_rewards: {extr: 1.0, disag: 0.1}
