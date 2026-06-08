@@ -182,7 +182,62 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
         )
 
     def step(self, action):
-        return self.task.step(action)
+        obs, reward, terminated, truncated, info = self.task.step(action)
+        info = {**info, **self._contact_info()}
+        return obs, reward, terminated, truncated, info
+
+    def _contact_info(self):
+        count = int(self.data.ncon)
+        labels = {
+            "contact_any": float(count > 0),
+            "contact_count": float(count),
+            "contact_hand": 0.0,
+            "contact_foot": 0.0,
+            "contact_torso": 0.0,
+            "contact_object": 0.0,
+            "contact_robot_object": 0.0,
+        }
+        object_tokens = (
+            "object", "box", "cube", "block", "peg", "door", "hatch",
+            "cabinet", "drawer", "handle", "target", "table",
+        )
+        hand_tokens = (
+            "hand", "palm", "finger", "thumb", "wrist", "lh_", "rh_",
+            "left_f", "right_f", "left_th", "right_th",
+        )
+        foot_tokens = ("foot", "ankle")
+        torso_tokens = ("torso", "pelvis", "waist", "hip")
+
+        def has_token(names, tokens):
+            text = " ".join(name for name in names if name).lower()
+            return any(token in text for token in tokens)
+
+        for i in range(count):
+            contact = self.data.contact[i]
+            geom_names = [
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom1)) or "",
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom2)) or "",
+            ]
+            body_names = []
+            for geom_id in (int(contact.geom1), int(contact.geom2)):
+                body_id = int(self.model.geom_bodyid[geom_id])
+                body_names.append(
+                    mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+                )
+            names = [*geom_names, *body_names]
+            hand = has_token(names, hand_tokens)
+            foot = has_token(names, foot_tokens)
+            torso = has_token(names, torso_tokens)
+            obj = has_token(names, object_tokens)
+            labels["contact_hand"] = max(labels["contact_hand"], float(hand))
+            labels["contact_foot"] = max(labels["contact_foot"], float(foot))
+            labels["contact_torso"] = max(labels["contact_torso"], float(torso))
+            labels["contact_object"] = max(labels["contact_object"], float(obj))
+            labels["contact_robot_object"] = max(
+                labels["contact_robot_object"],
+                float(obj and (hand or foot or torso)),
+            )
+        return labels
 
     def reset_model(self):
         if self.keyframe is not None:

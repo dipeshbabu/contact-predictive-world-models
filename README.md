@@ -8,8 +8,10 @@ This repo studies whether a contact-predictive auxiliary objective improves tact
 
 Core comparison:
 - PPO proprio-only baseline
+- PPO proprio+tactile baseline
 - Dreamer tactile baseline
 - Dreamer tactile + contact-predictive auxiliary loss
+- Dreamer tactile ablations: current tactile reconstruction, multi-step future tactile prediction, and no-action future tactile prediction
 
 Active tasks:
 - `h1touch-walk-v0`
@@ -171,6 +173,7 @@ Useful overrides:
 
 ```bash
 DREAMER_TASKS="h1touch-walk-v0 h1touch-door-v0" PPO_TASKS="h1touch-walk-v0 h1touch-door-v0" bash run_all.sh
+DREAMER_VARIANTS="base aux recon future3 noact" RUN_PPO_TACTILE=1 bash run_all.sh
 SEEDS="0 1" bash run_all.sh
 TRAIN_STEPS=500000 PPO_TRAIN_STEPS=200000 EVAL_STEPS=5000 PPO_EVAL_EPISODES=5 bash run_all.sh
 NUM_ENVS=2 bash run_all.sh
@@ -191,6 +194,14 @@ Default full-run coverage:
 - sensory sweeps across `NOISES x DROPS`
 - dynamics sweeps across `MASS_SCALES x FRICTION_SCALES` when `RUN_DYNAMICS=1`
 - PPO proprio-only baseline on all 6 tasks when `RUN_PPO=1`
+- PPO tactile baseline when `RUN_PPO_TACTILE=1`
+- Optional Dreamer ablations through `DREAMER_VARIANTS`:
+  - `base`: tactile Dreamer without auxiliary loss
+  - `aux` or `future1`: one-step future tactile prediction from latent state and action
+  - `recon` or `current`: current tactile reconstruction ablation
+  - `future3`: three-step future tactile prediction
+  - `future5`: five-step future tactile prediction
+  - `noact` or `future1_noact`: one-step future tactile prediction without action conditioning
 
 ## Manual Commands
 
@@ -216,6 +227,29 @@ python cpwm/train_dreamer.py \
   --num_envs 4 \
   --tactile_aux_weight 0.1 \
   --logdir outputs/runs/h1touch-door-v0_aux_s0
+```
+
+Train ablation variants:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --tactile_aux_mode current \
+  --logdir outputs/runs/h1touch-door-v0_recon_s0
+
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --tactile_aux_mode future \
+  --tactile_aux_horizon 3 \
+  --logdir outputs/runs/h1touch-door-v0_future3_s0
 ```
 
 Evaluate a checkpoint:
@@ -262,6 +296,17 @@ python cpwm/train_ppo.py \
   --seed 0 \
   --steps 1000000 \
   --logdir outputs/runs/h1touch-walk-v0_ppo_proprio_s0
+```
+
+Train PPO tactile baseline:
+
+```bash
+python cpwm/train_ppo.py \
+  --env h1touch-walk-v0 \
+  --seed 0 \
+  --steps 1000000 \
+  --sensors tactile \
+  --logdir outputs/runs/h1touch-walk-v0_ppo_tactile_s0
 ```
 
 Evaluate PPO baseline:

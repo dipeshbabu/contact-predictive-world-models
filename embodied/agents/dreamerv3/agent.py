@@ -109,9 +109,10 @@ class Agent(nj.Module):
 
     def report(self, data):
         self.config.jax.jit and embodied.print("Tracing report function", "yellow")
+        raw_data = data
         data = self.preprocess(data)
         report = {}
-        report.update(self.wm.report(data))
+        report.update(self.wm.report(data, raw_data))
         mets = self.task_behavior.report(data)
         report.update({f"task_{k}": v for k, v in mets.items()})
         if self.expl_behavior is not self.task_behavior:
@@ -153,8 +154,13 @@ class WorldModel(nj.Module):
         self.tactile_aux_head = None
         # Optional auxiliary head: predict next-step tactile vector from current latent features.
         if "tactile" in obs_space and getattr(config, "tactile_aux_weight", 0.0) > 0:
+            horizon = int(getattr(config, "tactile_aux_horizon", 1))
+            if horizon < 1:
+                raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
+            mode = str(getattr(config, "tactile_aux_mode", "future"))
+            pred_horizon = 1 if mode == "current" else horizon
             self.tactile_aux_head = nets.MLP(
-                obs_space["tactile"].shape,
+                (pred_horizon, *obs_space["tactile"].shape),
                 **config.tactile_aux_head,
                 name="tactile_next",
             )
@@ -208,16 +214,65 @@ class WorldModel(nj.Module):
             assert loss.shape == feats["embed"].shape[:2], (key, loss.shape)
             losses[key] = loss
 
-        # Auxiliary next-tactile prediction loss (self-supervised).
+        # Auxiliary tactile prediction loss (self-supervised).
         if self.tactile_aux_head is not None and "tactile" in data:
-            # Predict tactile_{t+1} from features at time t.
-            feats_t = feats["embed"][:, :-1]
-            target = data["tactile"][:, 1:].astype(f32)
+            # Predict tactile targets from posterior latent state z_t and
+            # optionally action a_t. Future targets train contact dynamics,
+            # while current targets provide the tactile reconstruction ablation.
+            # This makes the auxiliary signal target contact dynamics instead of
+            # simply reconstructing the current observation embedding.
+            mode = str(getattr(self.config, "tactile_aux_mode", "future"))
+            horizon = int(getattr(self.config, "tactile_aux_horizon", 1))
+            if mode not in ("future", "current"):
+                raise NotImplementedError(f"Unknown tactile_aux_mode: {mode}")
+            source_len = data["tactile"].shape[1]
+            if mode == "future":
+                source_len -= horizon
+            if source_len <= 0:
+                raise ValueError(
+                    "Batch length must exceed tactile_aux_horizon for future "
+                    f"prediction, got batch={data['tactile'].shape[1]} "
+                    f"horizon={horizon}."
+                )
+
+            stoch = feats["stoch"][:, :source_len]
+            stoch = stoch.reshape((*stoch.shape[:2], -1))
+            parts = [feats["deter"][:, :source_len], stoch]
+            use_action = bool(getattr(self.config, "tactile_aux_action", True))
+            actions = {key: data[key][:, :source_len] for key in self.act_space if key in data}
+            if use_action and actions:
+                act = jaxutils.concat_dict(actions).astype(f32)
+                act = act.reshape((*act.shape[:2], -1))
+                parts.append(act)
+            feats_t = jnp.concatenate([x.astype(f32) for x in parts], -1)
+
+            if mode == "future":
+                target = jnp.stack(
+                    [
+                        data["tactile"][:, offset : offset + source_len].astype(f32)
+                        for offset in range(1, horizon + 1)
+                    ],
+                    axis=2,
+                )
+                valid = jnp.stack(
+                    [
+                        1.0 - data["is_first"][:, offset : offset + source_len].astype(f32)
+                        for offset in range(1, horizon + 1)
+                    ],
+                    axis=2,
+                )
+                valid = valid.min(axis=2)
+            else:
+                target = data["tactile"][:, :source_len, None].astype(f32)
+                valid = 1.0 - data["is_first"][:, :source_len].astype(f32)
+
             pred_dist = self.tactile_aux_head(feats_t)
             aux = -pred_dist.log_prob(target)
+            aux = aux * valid
             losses["tactile_aux"] = aux
-            metrics["tactile_aux_loss"] = aux.mean()
+            metrics["tactile_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
             metrics["tactile_aux_weight"] = f32(self.config.tactile_aux_weight)
+            metrics["tactile_aux_horizon"] = f32(horizon)
 
         for key, dist in dists.items():
             if hasattr(dist, "entropy"):
@@ -229,7 +284,7 @@ class WorldModel(nj.Module):
         scaled = {k: v.mean() * self.scales[k] for k, v in losses.items()}
         model_loss = sum(scaled.values())
         assert model_loss.shape == ()
-        out.update({f"{k}_loss": v for k, v in losses.items()})
+        feats.update({f"{k}_loss": v for k, v in losses.items()})
         metrics.update(self._metrics(data, dists, states, stats, losses, model_loss))
         return model_loss, (feats, carry, metrics)
 
@@ -282,7 +337,7 @@ class WorldModel(nj.Module):
         traj["weight"] = jnp.cumprod(discount * traj["cont"], 0) / discount
         return traj
 
-    def report(self, data):
+    def report(self, data, raw_data=None):
         state = self.initial(len(data["is_first"]))
         report = {}
         report.update(self.loss(data, state)[-1][-1])
@@ -300,6 +355,60 @@ class WorldModel(nj.Module):
             error = (model - truth + 1) / 2
             video = jnp.concatenate([truth, model, error], 2)
             report[f"openl_{key}"] = jaxutils.video_grid(video)
+        if raw_data is not None:
+            report.update(self._contact_probe_report(data, raw_data))
+        return report
+
+    def _contact_probe_report(self, data, raw_data):
+        label_keys = [
+            "log_contact_any",
+            "log_contact_hand",
+            "log_contact_foot",
+            "log_contact_torso",
+            "log_contact_object",
+            "log_contact_robot_object",
+        ]
+        label_keys = [key for key in label_keys if key in raw_data]
+        if not label_keys:
+            return {}
+
+        states, _, _ = self.observe(data, self.initial(len(data["is_first"])))
+        stoch = states["stoch"].reshape((*states["stoch"].shape[:2], -1))
+        feat = jnp.concatenate([states["deter"], stoch], -1).astype(f32)
+        feat = feat.reshape((-1, feat.shape[-1]))
+        feat = feat[:, : min(feat.shape[-1], 256)]
+        feat = (feat - feat.mean(0, keepdims=True)) / (feat.std(0, keepdims=True) + 1e-4)
+        feat = jnp.concatenate([feat, jnp.ones((feat.shape[0], 1), f32)], -1)
+
+        n = feat.shape[0]
+        split = max(n // 2, 1)
+        train_x = feat[:split]
+        test_x = feat[split:]
+        ridge = 1e-3 * jnp.eye(train_x.shape[-1], dtype=f32)
+        report = {}
+
+        for key in label_keys:
+            y = raw_data[key].astype(f32).reshape((-1,))
+            train_y = y[:split, None]
+            test_y = y[split:]
+            xtx = train_x.T @ train_x + ridge
+            xty = train_x.T @ train_y
+            w = jnp.linalg.solve(xtx, xty)
+            score = (test_x @ w).squeeze(-1)
+            pred = score >= 0.5
+            truth = test_y >= 0.5
+            acc = (pred == truth).astype(f32).mean()
+            pos = truth.astype(f32).sum()
+            neg = (~truth).astype(f32).sum()
+            tp = (pred & truth).astype(f32).sum()
+            tn = ((~pred) & (~truth)).astype(f32).sum()
+            tpr = tp / jnp.maximum(pos, 1.0)
+            tnr = tn / jnp.maximum(neg, 1.0)
+            base = jnp.maximum(test_y.mean(), 1.0 - test_y.mean())
+            name = key[len("log_") :]
+            report[f"contact_probe/{name}_acc"] = acc
+            report[f"contact_probe/{name}_bal_acc"] = 0.5 * (tpr + tnr)
+            report[f"contact_probe/{name}_base_acc"] = base
         return report
 
     def _metrics(self, data, dists, states, stats, losses, model_loss):

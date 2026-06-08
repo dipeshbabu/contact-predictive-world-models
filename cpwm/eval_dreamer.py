@@ -197,7 +197,12 @@ def main() -> None:
 
     tactile_aux_weight = float(run_config.get("tactile_aux_weight", 0.0))
     if tactile_aux_weight > 0:
-        cmd += ["--tactile_aux_weight", str(tactile_aux_weight)]
+        cmd += [
+            "--tactile_aux_weight", str(tactile_aux_weight),
+            "--tactile_aux_mode", str(run_config.get("tactile_aux_mode", "future")),
+            "--tactile_aux_horizon", str(run_config.get("tactile_aux_horizon", 1)),
+            "--tactile_aux_action", str(run_config.get("tactile_aux_action", True)),
+        ]
 
     print("[EVAL CMD]", " ".join(cmd))
     print("[EVAL CKPT]", ckpt)

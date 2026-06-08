@@ -1,7 +1,40 @@
 #!/usr/bin/env python3
 import argparse
+import json
+import re
 from pathlib import Path
 import pandas as pd
+
+
+def read_last_probe_metrics(metrics_path: Path):
+    if not metrics_path.exists():
+        return {}
+    last = {}
+    with metrics_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            for key, value in row.items():
+                if key.startswith("report/contact_probe/"):
+                    try:
+                        last[key.replace("report/contact_probe/", "probe_")] = float(value)
+                    except Exception:
+                        pass
+    return last
+
+
+def infer_run_fields(run_dir: str):
+    name = Path(str(run_dir)).name
+    match = re.match(r"(.+?)_([A-Za-z0-9_]+)_s(\d+)$", name)
+    if not match:
+        return None
+    return {
+        "env": match.group(1),
+        "variant": match.group(2),
+        "seed": int(match.group(3)),
+    }
 
 
 def main():
@@ -34,6 +67,28 @@ def main():
     merged["robustness_gap"] = merged["clean_success"] - merged["perturbed_success"]
     numeric_cols = ["clean_success", "perturbed_success", "robustness_gap"]
     merged[numeric_cols] = merged[numeric_cols].round(args.decimals)
+
+    probe_rows = []
+    for run_dir in sorted(set(str(x) for x in df.get("run_dir", []) if str(x) and str(x) != "nan")):
+        fields = infer_run_fields(run_dir)
+        if fields is None:
+            continue
+        metrics = read_last_probe_metrics(Path(run_dir) / "metrics.jsonl")
+        if not metrics:
+            continue
+        probe_rows.append({**fields, **metrics})
+
+    if probe_rows:
+        probes = pd.DataFrame(probe_rows)
+        metric_cols = [c for c in probes.columns if c.startswith("probe_")]
+        probes = (
+            probes.groupby(["env", "variant"])[metric_cols]
+            .mean()
+            .reset_index()
+        )
+        probes[metric_cols] = probes[metric_cols].round(args.decimals)
+        merged = merged.merge(probes, on=["env", "variant"], how="outer")
+
     merged = merged.sort_values(["env", "variant"]).reset_index(drop=True)
 
     out = Path(args.out)

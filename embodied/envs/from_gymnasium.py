@@ -54,6 +54,13 @@ class FromGymnasium(embodied.Env):
             "is_terminal": embodied.Space(bool),
             "success": embodied.Space(np.float32),
             "success_subtasks": embodied.Space(np.float32),
+            "log_contact_any": embodied.Space(np.float32),
+            "log_contact_count": embodied.Space(np.float32),
+            "log_contact_hand": embodied.Space(np.float32),
+            "log_contact_foot": embodied.Space(np.float32),
+            "log_contact_torso": embodied.Space(np.float32),
+            "log_contact_object": embodied.Space(np.float32),
+            "log_contact_robot_object": embodied.Space(np.float32),
         }
         
 
@@ -85,13 +92,25 @@ class FromGymnasium(embodied.Env):
             is_terminal=bool(self._info.get("is_terminal", terminated)),
             success = self._info.get("success", 0.0),
             success_subtasks = self._info.get("success_subtasks", 0.0),
+            contact_info=self._info,
         )
 
-    def _obs(self, obs, reward, is_first=False, is_last=False, is_terminal=False, success=0.0, success_subtasks=0.0):
+    def _obs(
+        self,
+        obs,
+        reward,
+        is_first=False,
+        is_last=False,
+        is_terminal=False,
+        success=0.0,
+        success_subtasks=0.0,
+        contact_info=None,
+    ):
         if not self._obs_dict:
             obs = {self._obs_key: obs}
         obs = self._flatten(obs)
         obs = {k: np.asarray(v) for k, v in obs.items()}
+        contact_info = contact_info or {}
         obs.update(
             reward=np.float32(reward),
             is_first=is_first,
@@ -99,6 +118,15 @@ class FromGymnasium(embodied.Env):
             is_terminal=is_terminal,
             success=np.float32(success),
             success_subtasks=np.float32(success_subtasks),
+            log_contact_any=np.float32(contact_info.get("contact_any", 0.0)),
+            log_contact_count=np.float32(contact_info.get("contact_count", 0.0)),
+            log_contact_hand=np.float32(contact_info.get("contact_hand", 0.0)),
+            log_contact_foot=np.float32(contact_info.get("contact_foot", 0.0)),
+            log_contact_torso=np.float32(contact_info.get("contact_torso", 0.0)),
+            log_contact_object=np.float32(contact_info.get("contact_object", 0.0)),
+            log_contact_robot_object=np.float32(
+                contact_info.get("contact_robot_object", 0.0)
+            ),
         )
         if self._is_eval:
             obs["image"] = self.render()

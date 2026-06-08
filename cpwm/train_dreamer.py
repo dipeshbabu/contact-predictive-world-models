@@ -15,6 +15,18 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=2_000_000)
     ap.add_argument("--num_envs", type=int, default=4)
     ap.add_argument("--tactile_aux_weight", type=float, default=0.0)
+    ap.add_argument(
+        "--tactile_aux_mode",
+        choices=("future", "current"),
+        default="future",
+        help="future predicts tau_{t+1:t+H}; current is tactile reconstruction ablation",
+    )
+    ap.add_argument("--tactile_aux_horizon", type=int, default=1)
+    ap.add_argument(
+        "--no_tactile_aux_action",
+        action="store_true",
+        help="Disable action conditioning in the tactile auxiliary head",
+    )
     ap.add_argument("--logdir", required=True)
     ap.add_argument("--jax_platform", default="METAL")
     ap.add_argument("--use_rgb", action="store_true", help="Optional RGB mode if your env supports it")
@@ -42,7 +54,12 @@ def main() -> None:
     ]
 
     if args.tactile_aux_weight > 0:
-        cmd += ["--tactile_aux_weight", str(args.tactile_aux_weight)]
+        cmd += [
+            "--tactile_aux_weight", str(args.tactile_aux_weight),
+            "--tactile_aux_mode", args.tactile_aux_mode,
+            "--tactile_aux_horizon", str(args.tactile_aux_horizon),
+            "--tactile_aux_action", str(not args.no_tactile_aux_action),
+        ]
 
     print("[TRAIN CMD]", " ".join(cmd))
     if args.dry_run:

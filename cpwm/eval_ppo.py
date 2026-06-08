@@ -45,6 +45,7 @@ def make_env(
     drop: float,
     mass_scale: float,
     friction_scale: float,
+    sensors: str,
 ):
     import gymnasium as gym
     import humanoid_bench  # noqa: F401
@@ -53,7 +54,9 @@ def make_env(
         env_id,
         render_mode="rgb_array",
         obs_wrapper=True,
-        sensors="",
+        sensors=sensors,
+        tactile_flat=True,
+        tactile_concat=True,
         proprio_noise=noise,
         tactile_dropout=drop,
         mass_scale=mass_scale,
@@ -71,6 +74,7 @@ def main() -> None:
     ap.add_argument("--tactile_dropout", type=float, default=0.0)
     ap.add_argument("--mass_scale", type=float, default=1.0)
     ap.add_argument("--friction_scale", type=float, default=1.0)
+    ap.add_argument("--sensors", default="", help="Use 'tactile' for PPO tactile baseline")
     ap.add_argument("--results_csv", default="outputs/results/results.csv")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
@@ -91,6 +95,7 @@ def main() -> None:
             args.tactile_dropout,
             args.mass_scale,
             args.friction_scale,
+            args.sensors,
         )
         return
 
@@ -110,6 +115,7 @@ def main() -> None:
             args.tactile_dropout,
             args.mass_scale,
             args.friction_scale,
+            args.sensors,
         )
         obs, _ = env.reset()
         done = False
@@ -132,7 +138,7 @@ def main() -> None:
 
     row = {
         "env": args.env,
-        "variant": "ppo_proprio",
+        "variant": "ppo_tactile" if "tactile" in args.sensors.split(",") else "ppo_proprio",
         "seed": args.seed,
         "eval_steps": "",
         "proprio_noise": args.noise,

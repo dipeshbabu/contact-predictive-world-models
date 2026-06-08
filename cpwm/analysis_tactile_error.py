@@ -68,12 +68,17 @@ def main() -> None:
             if not match:
                 continue
             env, variant, seed = match.group(1), match.group(2), int(match.group(3))
-            if variant != "aux":
+            if variant in ("base", "ppo_proprio", "ppo_tactile"):
                 continue
 
             tactile_error = read_last_metric(
                 run_dir / "metrics.jsonl",
-                ["tactile_aux_loss", "tactile_aux_loss_mean"],
+                [
+                    "tactile_aux_loss",
+                    "tactile_aux_loss_mean",
+                    "train/tactile_aux_loss",
+                    "train/tactile_aux_loss_mean",
+                ],
             )
             if tactile_error is None:
                 continue

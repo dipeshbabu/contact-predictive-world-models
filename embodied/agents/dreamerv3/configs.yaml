@@ -118,6 +118,9 @@ defaults:
   actent: 3e-4
   talk_prior: False
   tactile_aux_weight: 0.0
+  tactile_aux_mode: future
+  tactile_aux_horizon: 1
+  tactile_aux_action: True
   tactile_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
 
   # Exploration
@@ -284,6 +287,8 @@ humanoid_benchmark:
     eval_every: 500000  # Steps
     train_ratio: 64
     log_every: 30 # Seconds
+    log_keys_avg: '^log_contact_count$'
+    log_keys_max: '^log_contact_.*'
   batch_size: 16
   encoder: {mlp_keys: '.*', cnn_keys: '$^'}
   decoder: {mlp_keys: '.*', cnn_keys: '$^'}
