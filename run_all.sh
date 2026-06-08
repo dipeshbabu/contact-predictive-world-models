@@ -16,6 +16,7 @@ PPO_TRAIN_STEPS=${PPO_TRAIN_STEPS:-1000000}
 EVAL_STEPS=${EVAL_STEPS:-20000}
 PPO_EVAL_EPISODES=${PPO_EVAL_EPISODES:-20}
 NUM_ENVS=${NUM_ENVS:-4}
+JAX_PLATFORM=${JAX_PLATFORM:-gpu}
 
 AUX_ON=${AUX_ON:-0.1}
 AUX_OFF=${AUX_OFF:-0.0}
@@ -52,6 +53,7 @@ echo "PPO_TRAIN_STEPS=$PPO_TRAIN_STEPS"
 echo "EVAL_STEPS=$EVAL_STEPS"
 echo "PPO_EVAL_EPISODES=$PPO_EVAL_EPISODES"
 echo "NUM_ENVS=$NUM_ENVS"
+echo "JAX_PLATFORM=$JAX_PLATFORM"
 echo "RUN_PPO_TACTILE=$RUN_PPO_TACTILE"
 echo "DRY_RUN=$DRY_RUN"
 
@@ -69,6 +71,7 @@ train_dreamer_one () {
     --seed "${seed}"
     --steps "${TRAIN_STEPS}"
     --num_envs "${NUM_ENVS}"
+    --jax_platform "${JAX_PLATFORM}"
     --tactile_aux_weight "${aux_weight}"
     --tactile_aux_mode "${aux_mode}"
     --tactile_aux_horizon "${aux_horizon}"

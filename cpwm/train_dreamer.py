@@ -28,7 +28,7 @@ def main() -> None:
         help="Disable action conditioning in the tactile auxiliary head",
     )
     ap.add_argument("--logdir", required=True)
-    ap.add_argument("--jax_platform", default="METAL")
+    ap.add_argument("--jax_platform", default="gpu")
     ap.add_argument("--use_rgb", action="store_true", help="Optional RGB mode if your env supports it")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()

@@ -225,6 +225,8 @@ class WorldModel(nj.Module):
             horizon = int(getattr(self.config, "tactile_aux_horizon", 1))
             if mode not in ("future", "current"):
                 raise NotImplementedError(f"Unknown tactile_aux_mode: {mode}")
+            if mode == "current":
+                horizon = 1
             source_len = data["tactile"].shape[1]
             if mode == "future":
                 source_len -= horizon
