@@ -142,7 +142,7 @@ Debug outputs go to:
 
 ## Full Run
 
-Run the full proposal-complete pipeline:
+Run the full paper matrix:
 
 ```bash
 bash run_all.sh
@@ -160,8 +160,8 @@ Default task split:
 - `run_all_half2.sh`: `h1touch-run-v0 h1touch-door-v0 h1touch-insert_small-v0`
 
 Each wrapper runs both:
-- Dreamer base and auxiliary training plus evaluation
-- PPO training plus evaluation
+- Dreamer base, auxiliary, reconstruction, multi-step, and no-action ablation training plus evaluation
+- PPO proprio and PPO tactile training plus evaluation
 - isolated output paths by default, so both people can run them concurrently in the same shared workspace
 
 ```bash
@@ -173,7 +173,7 @@ Useful overrides:
 
 ```bash
 DREAMER_TASKS="h1touch-walk-v0 h1touch-door-v0" PPO_TASKS="h1touch-walk-v0 h1touch-door-v0" bash run_all.sh
-DREAMER_VARIANTS="base aux recon future3 noact" RUN_PPO_TACTILE=1 bash run_all.sh
+DREAMER_VARIANTS="base aux" RUN_PPO_TACTILE=0 bash run_all.sh
 SEEDS="0 1" bash run_all.sh
 TRAIN_STEPS=500000 PPO_TRAIN_STEPS=200000 EVAL_STEPS=5000 PPO_EVAL_EPISODES=5 bash run_all.sh
 NUM_ENVS=2 bash run_all.sh
@@ -190,12 +190,12 @@ Main outputs:
 - `outputs/figs/`
 
 Default full-run coverage:
-- Dreamer base and auxiliary models on all 6 tasks
+- Dreamer `base`, `aux`, `recon`, `future3`, and `noact` variants on all 6 tasks
 - sensory sweeps across `NOISES x DROPS`
 - dynamics sweeps across `MASS_SCALES x FRICTION_SCALES` when `RUN_DYNAMICS=1`
 - PPO proprio-only baseline on all 6 tasks when `RUN_PPO=1`
-- PPO tactile baseline when `RUN_PPO_TACTILE=1`
-- Optional Dreamer ablations through `DREAMER_VARIANTS`:
+- PPO tactile baseline on all 6 tasks when `RUN_PPO=1`
+- Dreamer variants are controlled through `DREAMER_VARIANTS`:
   - `base`: tactile Dreamer without auxiliary loss
   - `aux` or `future1`: one-step future tactile prediction from latent state and action
   - `recon` or `current`: current tactile reconstruction ablation
