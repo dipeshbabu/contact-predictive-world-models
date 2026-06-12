@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 import pandas as pd
@@ -37,6 +38,15 @@ def infer_run_fields(run_dir: str):
     }
 
 
+def norm_path(value):
+    if value is None:
+        return ""
+    text = str(value)
+    if not text or text == "nan":
+        return ""
+    return os.path.normcase(os.path.abspath(text))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default="outputs/results/results.csv")
@@ -54,6 +64,14 @@ def main():
     df["tactile_dropout"] = pd.to_numeric(df["tactile_dropout"], errors="coerce").fillna(0.0)
     df["mass_scale"] = pd.to_numeric(df["mass_scale"], errors="coerce").fillna(1.0)
     df["friction_scale"] = pd.to_numeric(df["friction_scale"], errors="coerce").fillna(1.0)
+    if "run_dir" in df:
+        inferred = df["run_dir"].map(infer_run_fields)
+        for field in ("env", "variant", "seed"):
+            values = inferred.map(lambda item: item.get(field) if item else None)
+            df[field] = values.combine_first(df[field])
+        df["_run_dir_norm"] = df["run_dir"].map(norm_path)
+    else:
+        df["_run_dir_norm"] = ""
     df = df[df["success"].notna()].copy()
     df = df[(df["mass_scale"] == 1.0) & (df["friction_scale"] == 1.0)]
 

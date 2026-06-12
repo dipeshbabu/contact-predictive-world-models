@@ -125,17 +125,16 @@ def main() -> None:
         env = task[len("humanoid_") :]
     if seed is None and "seed" in run_config:
         seed = int(run_config["seed"])
-    if run_config.get("tactile_aux_weight", 0.0) > 0:
-        variant = "aux"
-
     m = re.match(r"(.+?)_([A-Za-z0-9_]+)_s(\d+)$", run_dir.name)
     if m:
         if env is None:
             env = m.group(1)
-        if variant == "unknown":
-            variant = m.group(2)
+        variant = m.group(2)
         if seed is None:
             seed = int(m.group(3))
+
+    if variant == "unknown" and run_config.get("tactile_aux_weight", 0.0) > 0:
+        variant = "aux"
 
     if env is None:
         raise ValueError("Could not infer env from run_dir name. Pass --env explicitly.")
