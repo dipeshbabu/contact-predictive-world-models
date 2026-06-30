@@ -39,29 +39,34 @@ def _append_csv(path: Path, row: Dict[str, Any]) -> None:
         writer.writerow(row)
 
 
-def make_env(
+def make_env_fn(
     env_id: str,
     noise: float,
     drop: float,
     mass_scale: float,
     friction_scale: float,
     sensors: str,
+    env_kwargs: dict,
 ):
-    import gymnasium as gym
-    import humanoid_bench  # noqa: F401
+    def thunk():
+        import gymnasium as gym
+        import humanoid_bench  # noqa: F401
 
-    return gym.make(
-        env_id,
-        render_mode="rgb_array",
-        obs_wrapper=True,
-        sensors=sensors,
-        tactile_flat=True,
-        tactile_concat=True,
-        proprio_noise=noise,
-        tactile_dropout=drop,
-        mass_scale=mass_scale,
-        friction_scale=friction_scale,
-    )
+        return gym.make(
+            env_id,
+            render_mode="rgb_array",
+            obs_wrapper=True,
+            sensors=sensors,
+            tactile_flat=True,
+            tactile_concat=True,
+            proprio_noise=noise,
+            tactile_dropout=drop,
+            mass_scale=mass_scale,
+            friction_scale=friction_scale,
+            **env_kwargs,
+        )
+
+    return thunk
 
 
 def main() -> None:
@@ -75,7 +80,16 @@ def main() -> None:
     ap.add_argument("--mass_scale", type=float, default=1.0)
     ap.add_argument("--friction_scale", type=float, default=1.0)
     ap.add_argument("--sensors", default="", help="Use 'tactile' for PPO tactile baseline")
+    ap.add_argument("--variant", default="")
     ap.add_argument("--results_csv", default="outputs/results/results.csv")
+    ap.add_argument("--door_success_stand_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_door_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_hatch_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_passage_threshold", type=float, default=0.8)
+    ap.add_argument("--insert_success_stand_threshold", type=float, default=0.8)
+    ap.add_argument("--insert_success_cube_threshold", type=float, default=0.9)
+    ap.add_argument("--insert_success_peg_height_threshold", type=float, default=0.9)
+    ap.add_argument("--contact_label_overrides", default="")
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
 
@@ -100,34 +114,55 @@ def main() -> None:
         return
 
     from stable_baselines3 import PPO
+    from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
     import numpy as np
-
-    model = PPO.load(str(model_path))
 
     returns = []
     successes = []
     lengths = []
+    env_kwargs = {
+        "door_success_stand_threshold": args.door_success_stand_threshold,
+        "door_success_door_threshold": args.door_success_door_threshold,
+        "door_success_hatch_threshold": args.door_success_hatch_threshold,
+        "door_success_passage_threshold": args.door_success_passage_threshold,
+        "insert_success_stand_threshold": args.insert_success_stand_threshold,
+        "insert_success_cube_threshold": args.insert_success_cube_threshold,
+        "insert_success_peg_height_threshold": args.insert_success_peg_height_threshold,
+        "contact_label_overrides": args.contact_label_overrides,
+    }
 
     for _ in range(args.episodes):
-        env = make_env(
-            args.env,
-            args.noise,
-            args.tactile_dropout,
-            args.mass_scale,
-            args.friction_scale,
-            args.sensors,
+        env = DummyVecEnv(
+            [
+                make_env_fn(
+                    args.env,
+                    args.noise,
+                    args.tactile_dropout,
+                    args.mass_scale,
+                    args.friction_scale,
+                    args.sensors,
+                    env_kwargs,
+                )
+            ]
         )
-        obs, _ = env.reset()
+        norm_path = run_dir / "vecnormalize.pkl"
+        if norm_path.exists():
+            env = VecNormalize.load(str(norm_path), env)
+            env.training = False
+            env.norm_reward = False
+        model = PPO.load(str(model_path), env=env)
+        obs = env.reset()
         done = False
-        truncated = False
         ep_ret = 0.0
         ep_len = 0
         ep_success = False
 
-        while not (done or truncated):
+        while not done:
             action, _ = model.predict(obs, deterministic=True)
-            obs, reward, done, truncated, info = env.step(action)
-            ep_ret += float(reward)
+            obs, reward, dones, infos = env.step(action)
+            done = bool(dones[0])
+            info = infos[0]
+            ep_ret += float(reward[0])
             ep_len += 1
             ep_success = ep_success or bool(info.get("success", False))
 
@@ -138,7 +173,8 @@ def main() -> None:
 
     row = {
         "env": args.env,
-        "variant": "ppo_tactile" if "tactile" in args.sensors.split(",") else "ppo_proprio",
+        "variant": args.variant
+        or ("ppo_tactile" if "tactile" in args.sensors.split(",") else "ppo_proprio"),
         "seed": args.seed,
         "eval_steps": "",
         "proprio_noise": args.noise,

@@ -31,6 +31,16 @@ from . import ninjax as nj
 # from . import ssm
 
 
+CONTACT_AUX_KEYS = (
+    "log_contact_any",
+    "log_contact_hand",
+    "log_contact_foot",
+    "log_contact_torso",
+    "log_contact_object",
+    "log_contact_robot_object",
+)
+
+
 @jaxagent.Wrapper
 class Agent(nj.Module):
     configs = yaml.YAML(typ="safe").load(
@@ -39,7 +49,9 @@ class Agent(nj.Module):
 
     def __init__(self, obs_space, act_space, config):
         self.obs_space = {
-            k: v for k, v in obs_space.items() if not k.startswith("log_")
+            k: v
+            for k, v in obs_space.items()
+            if not k.startswith("log_") and k not in ("success", "success_subtasks")
         }
         self.act_space = {k: v for k, v in act_space.items() if k != "reset"}
         self.config = config
@@ -87,7 +99,12 @@ class Agent(nj.Module):
 
     def train(self, data, carry, train_wm=True, train_ac=True, ignore_inputs=()):
         self.config.jax.jit and embodied.print("Tracing train function", "yellow")
+        raw_data = data
         data = self.preprocess(data)
+        if getattr(self.config, "contact_aux_weight", 0.0) > 0:
+            for key in CONTACT_AUX_KEYS:
+                if key in raw_data:
+                    data[key] = raw_data[key]
         for key in ignore_inputs:
             data[key] = jnp.zeros_like(data[key])
         metrics = {}
@@ -124,7 +141,13 @@ class Agent(nj.Module):
         spaces = {**self.obs_space, **self.act_space}
         result = {}
         for key, value in obs.items():
-            if key.startswith("log_") or key in ("reset", "key", "id"):
+            if key.startswith("log_") or key in (
+                "reset",
+                "key",
+                "id",
+                "success",
+                "success_subtasks",
+            ):
                 continue
             space = spaces[key]
             if key in self.act_space and space.discrete:
@@ -152,6 +175,7 @@ class WorldModel(nj.Module):
             "cont": nets.MLP((), **config.cont_head, name="cont"),
         }
         self.tactile_aux_head = None
+        self.contact_aux_head = None
         # Optional auxiliary head: predict next-step tactile vector from current latent features.
         if "tactile" in obs_space and getattr(config, "tactile_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "tactile_aux_horizon", 1))
@@ -164,6 +188,17 @@ class WorldModel(nj.Module):
                 **config.tactile_aux_head,
                 name="tactile_next",
             )
+        if getattr(config, "contact_aux_weight", 0.0) > 0:
+            horizon = int(getattr(config, "contact_aux_horizon", 1))
+            if horizon < 1:
+                raise ValueError(f"contact_aux_horizon must be >= 1, got {horizon}")
+            mode = str(getattr(config, "contact_aux_mode", "future"))
+            pred_horizon = 1 if mode == "current" else horizon
+            self.contact_aux_head = nets.MLP(
+                (pred_horizon, len(CONTACT_AUX_KEYS)),
+                **config.contact_aux_head,
+                name="contact_next",
+            )
 
         self.opt = jaxutils.Optimizer(name="model_opt", **config.model_opt)
         scales = self.config.loss_scales.copy()
@@ -174,6 +209,8 @@ class WorldModel(nj.Module):
         self.scales = scales
         if "tactile_aux" not in self.scales:
             self.scales["tactile_aux"] = float(self.config.tactile_aux_weight)
+        if "contact_aux" not in self.scales:
+            self.scales["contact_aux"] = float(self.config.contact_aux_weight)
 
     def initial(self, batch_size):
         bs = batch_size
@@ -188,6 +225,8 @@ class WorldModel(nj.Module):
         modules = [self.encoder, self.rssm, *self.heads.values()]
         if self.tactile_aux_head is not None:
             modules.append(self.tactile_aux_head)
+        if self.contact_aux_head is not None:
+            modules.append(self.contact_aux_head)
         mets, (outs, carry, metrics) = self.opt(
             modules, self.loss, data, carry, ignore_inputs, has_aux=True
         )
@@ -275,6 +314,80 @@ class WorldModel(nj.Module):
             metrics["tactile_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
             metrics["tactile_aux_weight"] = f32(self.config.tactile_aux_weight)
             metrics["tactile_aux_horizon"] = f32(horizon)
+
+        if self.contact_aux_head is not None:
+            label_keys = [key for key in CONTACT_AUX_KEYS if key in data]
+            if not label_keys:
+                raise ValueError(
+                    "contact_aux_weight > 0 requires log_contact_* labels in data."
+                )
+            mode = str(getattr(self.config, "contact_aux_mode", "future"))
+            horizon = int(getattr(self.config, "contact_aux_horizon", 1))
+            if mode not in ("future", "current"):
+                raise NotImplementedError(f"Unknown contact_aux_mode: {mode}")
+            if mode == "current":
+                horizon = 1
+            label_values = []
+            for key in CONTACT_AUX_KEYS:
+                value = data[key].astype(f32)
+                if value.shape[-1:] == (1,):
+                    value = value[..., 0]
+                label_values.append(value)
+            labels = jnp.stack(label_values, -1)
+            source_len = labels.shape[1]
+            if mode == "future":
+                source_len -= horizon
+            if source_len <= 0:
+                raise ValueError(
+                    "Batch length must exceed contact_aux_horizon for future "
+                    f"prediction, got batch={labels.shape[1]} horizon={horizon}."
+                )
+
+            stoch = feats["stoch"][:, :source_len]
+            stoch = stoch.reshape((*stoch.shape[:2], -1))
+            parts = [feats["deter"][:, :source_len], stoch]
+            use_action = bool(getattr(self.config, "contact_aux_action", True))
+            actions = {key: data[key][:, :source_len] for key in self.act_space if key in data}
+            if use_action and actions:
+                act = jaxutils.concat_dict(actions).astype(f32)
+                act = act.reshape((*act.shape[:2], -1))
+                parts.append(act)
+            feats_t = jnp.concatenate([x.astype(f32) for x in parts], -1)
+
+            if mode == "future":
+                target = jnp.stack(
+                    [
+                        labels[:, offset : offset + source_len]
+                        for offset in range(1, horizon + 1)
+                    ],
+                    axis=2,
+                )
+                valid = jnp.stack(
+                    [
+                        1.0 - data["is_first"][:, offset : offset + source_len].astype(f32)
+                        for offset in range(1, horizon + 1)
+                    ],
+                    axis=2,
+                )
+                valid = valid.min(axis=2)
+            else:
+                target = labels[:, :source_len, None]
+                valid = 1.0 - data["is_first"][:, :source_len].astype(f32)
+
+            pred_dist = self.contact_aux_head(feats_t)
+            aux = -pred_dist.log_prob(target)
+            aux = aux * valid
+            losses["contact_aux"] = aux
+            pred = pred_dist.mean() >= 0.5
+            truth = target >= 0.5
+            correct = (pred == truth).astype(f32)
+            metrics["contact_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
+            metrics["contact_aux_accuracy"] = (
+                correct * valid[..., None, None]
+            ).sum() / jnp.maximum(valid.sum() * target.shape[-1] * target.shape[-2], 1.0)
+            metrics["contact_aux_positive_rate"] = target.mean()
+            metrics["contact_aux_weight"] = f32(self.config.contact_aux_weight)
+            metrics["contact_aux_horizon"] = f32(horizon)
 
         for key, dist in dists.items():
             if hasattr(dist, "entropy"):
@@ -382,17 +495,15 @@ class WorldModel(nj.Module):
         feat = (feat - feat.mean(0, keepdims=True)) / (feat.std(0, keepdims=True) + 1e-4)
         feat = jnp.concatenate([feat, jnp.ones((feat.shape[0], 1), f32)], -1)
 
-        n = feat.shape[0]
-        split = max(n // 2, 1)
-        train_x = feat[:split]
-        test_x = feat[split:]
+        train_x = feat[::2]
+        test_x = feat[1::2]
         ridge = 1e-3 * jnp.eye(train_x.shape[-1], dtype=f32)
         report = {}
 
         for key in label_keys:
             y = raw_data[key].astype(f32).reshape((-1,))
-            train_y = y[:split, None]
-            test_y = y[split:]
+            train_y = y[::2, None]
+            test_y = y[1::2]
             xtx = train_x.T @ train_x + ridge
             xty = train_x.T @ train_y
             w = jnp.linalg.solve(xtx, xty)
@@ -403,13 +514,27 @@ class WorldModel(nj.Module):
             pos = truth.astype(f32).sum()
             neg = (~truth).astype(f32).sum()
             tp = (pred & truth).astype(f32).sum()
+            fp = (pred & (~truth)).astype(f32).sum()
+            fn = ((~pred) & truth).astype(f32).sum()
             tn = ((~pred) & (~truth)).astype(f32).sum()
             tpr = tp / jnp.maximum(pos, 1.0)
             tnr = tn / jnp.maximum(neg, 1.0)
+            precision = tp / jnp.maximum(tp + fp, 1.0)
+            recall = tp / jnp.maximum(tp + fn, 1.0)
+            f1 = 2.0 * precision * recall / jnp.maximum(precision + recall, 1e-6)
+            pos_scores = jnp.where(truth, score, -jnp.inf)
+            neg_scores = jnp.where(~truth, score, jnp.inf)
+            pair = pos_scores[:, None] - neg_scores[None, :]
+            auc_num = ((pair > 0).astype(f32) + 0.5 * (pair == 0).astype(f32)).sum()
+            auc = auc_num / jnp.maximum(pos * neg, 1.0)
+            auc = jnp.where((pos > 0) & (neg > 0), auc, 0.5)
             base = jnp.maximum(test_y.mean(), 1.0 - test_y.mean())
             name = key[len("log_") :]
             report[f"contact_probe/{name}_acc"] = acc
             report[f"contact_probe/{name}_bal_acc"] = 0.5 * (tpr + tnr)
+            report[f"contact_probe/{name}_auroc"] = auc
+            report[f"contact_probe/{name}_f1"] = f1
+            report[f"contact_probe/{name}_pos_rate"] = test_y.mean()
             report[f"contact_probe/{name}_base_acc"] = base
         return report
 

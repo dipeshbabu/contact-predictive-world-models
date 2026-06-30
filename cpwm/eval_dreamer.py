@@ -17,6 +17,28 @@ except ModuleNotFoundError:
     yaml = None
 
 
+KNOWN_VARIANTS = (
+    "future1_noact",
+    "proprio_only",
+    "ppo_proprio",
+    "ppo_tactile",
+    "aux_contact",
+    "future1",
+    "future3",
+    "future5",
+    "contact1",
+    "contact3",
+    "current",
+    "proprio",
+    "contact",
+    "noact",
+    "recon",
+    "both",
+    "base",
+    "aux",
+)
+
+
 def _read_last_metric(metrics_path: Path, key: str) -> Optional[float]:
     if not metrics_path.exists():
         return None
@@ -98,6 +120,19 @@ def _load_run_config(run_dir: Path) -> Dict[str, Any]:
     return data or {}
 
 
+def _infer_run_name(name: str) -> Optional[tuple[str, str, int]]:
+    match = re.match(r"(.+)_s(\d+)$", name)
+    if not match:
+        return None
+    stem, seed = match.group(1), int(match.group(2))
+    for variant in sorted(KNOWN_VARIANTS, key=len, reverse=True):
+        suffix = f"_{variant}"
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)], variant, seed
+    env, variant = stem.rsplit("_", 1)
+    return env, variant, seed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run_dir", required=True)
@@ -109,6 +144,14 @@ def main() -> None:
     ap.add_argument("--results_csv", default="outputs/results/results.csv")
     ap.add_argument("--env", default=None)
     ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--door_success_stand_threshold", type=float, default=None)
+    ap.add_argument("--door_success_door_threshold", type=float, default=None)
+    ap.add_argument("--door_success_hatch_threshold", type=float, default=None)
+    ap.add_argument("--door_success_passage_threshold", type=float, default=None)
+    ap.add_argument("--insert_success_stand_threshold", type=float, default=None)
+    ap.add_argument("--insert_success_cube_threshold", type=float, default=None)
+    ap.add_argument("--insert_success_peg_height_threshold", type=float, default=None)
+    ap.add_argument("--contact_label_overrides", default=None)
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
 
@@ -125,13 +168,14 @@ def main() -> None:
         env = task[len("humanoid_") :]
     if seed is None and "seed" in run_config:
         seed = int(run_config["seed"])
-    m = re.match(r"(.+?)_([A-Za-z0-9_]+)_s(\d+)$", run_dir.name)
-    if m:
+    parsed = _infer_run_name(run_dir.name)
+    if parsed:
+        parsed_env, parsed_variant, parsed_seed = parsed
         if env is None:
-            env = m.group(1)
-        variant = m.group(2)
+            env = parsed_env
+        variant = parsed_variant
         if seed is None:
-            seed = int(m.group(3))
+            seed = parsed_seed
 
     if variant == "unknown" and run_config.get("tactile_aux_weight", 0.0) > 0:
         variant = "aux"
@@ -167,10 +211,61 @@ def main() -> None:
     humanoid_cfg = run_config.get("env", {}).get("humanoid", {})
     obs_key = str(humanoid_cfg.get("obs_key", "dict"))
     obs_wrapper = str(humanoid_cfg.get("obs_wrapper", True))
-    sensors = str(humanoid_cfg.get("sensors", "tactile"))
+    default_sensors = "" if variant in ("proprio", "proprio_only") else "tactile"
+    sensors = str(humanoid_cfg.get("sensors", default_sensors))
     tactile_flat = str(humanoid_cfg.get("tactile_flat", True))
     tactile_concat = str(humanoid_cfg.get("tactile_concat", True))
     jax_platform = str(run_config.get("jax", {}).get("platform", "gpu"))
+    success_contact_args = [
+        "--env.humanoid.door_success_stand_threshold",
+        str(
+            args.door_success_stand_threshold
+            if args.door_success_stand_threshold is not None
+            else humanoid_cfg.get("door_success_stand_threshold", 0.8)
+        ),
+        "--env.humanoid.door_success_door_threshold",
+        str(
+            args.door_success_door_threshold
+            if args.door_success_door_threshold is not None
+            else humanoid_cfg.get("door_success_door_threshold", 0.8)
+        ),
+        "--env.humanoid.door_success_hatch_threshold",
+        str(
+            args.door_success_hatch_threshold
+            if args.door_success_hatch_threshold is not None
+            else humanoid_cfg.get("door_success_hatch_threshold", 0.8)
+        ),
+        "--env.humanoid.door_success_passage_threshold",
+        str(
+            args.door_success_passage_threshold
+            if args.door_success_passage_threshold is not None
+            else humanoid_cfg.get("door_success_passage_threshold", 0.8)
+        ),
+        "--env.humanoid.insert_success_stand_threshold",
+        str(
+            args.insert_success_stand_threshold
+            if args.insert_success_stand_threshold is not None
+            else humanoid_cfg.get("insert_success_stand_threshold", 0.8)
+        ),
+        "--env.humanoid.insert_success_cube_threshold",
+        str(
+            args.insert_success_cube_threshold
+            if args.insert_success_cube_threshold is not None
+            else humanoid_cfg.get("insert_success_cube_threshold", 0.9)
+        ),
+        "--env.humanoid.insert_success_peg_height_threshold",
+        str(
+            args.insert_success_peg_height_threshold
+            if args.insert_success_peg_height_threshold is not None
+            else humanoid_cfg.get("insert_success_peg_height_threshold", 0.9)
+        ),
+        "--env.humanoid.contact_label_overrides",
+        str(
+            args.contact_label_overrides
+            if args.contact_label_overrides is not None
+            else humanoid_cfg.get("contact_label_overrides", "")
+        ),
+    ]
 
     cmd = [
         sys.executable, "-m", "embodied.agents.dreamerv3.train",
@@ -192,15 +287,52 @@ def main() -> None:
         "--env.humanoid.mass_scale", str(args.mass_scale),
         "--env.humanoid.friction_scale", str(args.friction_scale),
         "--run.from_checkpoint", str(ckpt),
-    ]
+    ] + success_contact_args
 
-    tactile_aux_weight = float(run_config.get("tactile_aux_weight", 0.0))
+    default_tactile_aux = (
+        0.1
+        if variant
+        in (
+            "aux",
+            "future1",
+            "recon",
+            "current",
+            "future3",
+            "future5",
+            "noact",
+            "future1_noact",
+            "both",
+            "aux_contact",
+        )
+        else 0.0
+    )
+    tactile_aux_weight = float(run_config.get("tactile_aux_weight", default_tactile_aux))
     if tactile_aux_weight > 0:
+        default_tactile_mode = "current" if variant in ("recon", "current") else "future"
+        default_tactile_horizon = 3 if variant == "future3" else 5 if variant == "future5" else 1
+        default_tactile_action = variant not in ("noact", "future1_noact")
         cmd += [
             "--tactile_aux_weight", str(tactile_aux_weight),
-            "--tactile_aux_mode", str(run_config.get("tactile_aux_mode", "future")),
-            "--tactile_aux_horizon", str(run_config.get("tactile_aux_horizon", 1)),
-            "--tactile_aux_action", str(run_config.get("tactile_aux_action", True)),
+            "--tactile_aux_mode",
+            str(run_config.get("tactile_aux_mode", default_tactile_mode)),
+            "--tactile_aux_horizon",
+            str(run_config.get("tactile_aux_horizon", default_tactile_horizon)),
+            "--tactile_aux_action",
+            str(run_config.get("tactile_aux_action", default_tactile_action)),
+        ]
+    default_contact_aux = (
+        0.1
+        if variant in ("contact", "contact1", "contact3", "both", "aux_contact")
+        else 0.0
+    )
+    contact_aux_weight = float(run_config.get("contact_aux_weight", default_contact_aux))
+    if contact_aux_weight > 0:
+        cmd += [
+            "--contact_aux_weight", str(contact_aux_weight),
+            "--contact_aux_mode", str(run_config.get("contact_aux_mode", "future")),
+            "--contact_aux_horizon",
+            str(run_config.get("contact_aux_horizon", 3 if variant == "contact3" else 1)),
+            "--contact_aux_action", str(run_config.get("contact_aux_action", True)),
         ]
 
     print("[EVAL CMD]", " ".join(cmd))

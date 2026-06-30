@@ -5,6 +5,18 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
+
+
+def _sem(values):
+    values = pd.to_numeric(values, errors="coerce").dropna()
+    if len(values) <= 1:
+        return 0.0
+    return float(values.std(ddof=1) / np.sqrt(len(values)))
+
+
+def _ci95(values):
+    return 1.96 * _sem(values)
 
 
 def main() -> None:
@@ -26,13 +38,14 @@ def main() -> None:
     dyn = df[(df["mass_scale"] != 1.0) | (df["friction_scale"] != 1.0)].copy()
     summary = (
         dyn.groupby(["env", "variant", "mass_scale", "friction_scale"])["success"]
-        .mean()
+        .agg(success="mean", n="count", sem=_sem, ci95=_ci95)
         .reset_index()
         .sort_values(["env", "variant", "mass_scale", "friction_scale"])
         .reset_index(drop=True)
     )
     if not summary.empty:
-        summary["success"] = summary["success"].round(args.decimals)
+        for col in ("success", "sem", "ci95"):
+            summary[col] = summary[col].round(args.decimals)
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

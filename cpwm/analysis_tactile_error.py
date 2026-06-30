@@ -12,6 +12,27 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
+KNOWN_VARIANTS = (
+    "future1_noact",
+    "proprio_only",
+    "ppo_proprio",
+    "ppo_tactile",
+    "aux_contact",
+    "future1",
+    "future3",
+    "future5",
+    "contact1",
+    "contact3",
+    "current",
+    "proprio",
+    "contact",
+    "noact",
+    "recon",
+    "both",
+    "base",
+    "aux",
+)
+
 
 def read_last_metric(metrics_path: Path, candidate_keys):
     if not metrics_path.exists():
@@ -38,13 +59,23 @@ def read_last_metric(metrics_path: Path, candidate_keys):
 
 
 def infer_run_fields(run_dir: Path):
-    match = re.match(r"(.+?)_([A-Za-z0-9_]+)_s(\d+)$", run_dir.name)
+    match = re.match(r"(.+)_s(\d+)$", run_dir.name)
     if not match:
         return None
+    stem, seed = match.group(1), int(match.group(2))
+    for variant in sorted(KNOWN_VARIANTS, key=len, reverse=True):
+        suffix = f"_{variant}"
+        if stem.endswith(suffix):
+            return {
+                "env": stem[: -len(suffix)],
+                "variant": variant,
+                "seed": seed,
+            }
+    env, variant = stem.rsplit("_", 1)
     return {
-        "env": match.group(1),
-        "variant": match.group(2),
-        "seed": int(match.group(3)),
+        "env": env,
+        "variant": variant,
+        "seed": seed,
     }
 
 

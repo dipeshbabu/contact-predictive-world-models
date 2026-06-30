@@ -48,6 +48,15 @@ class Insert(Task):
 
     def __init__(self, robot=None, env=None, **kwargs):
         super().__init__(robot, env, **kwargs)
+        self.success_stand_threshold = float(
+            kwargs.get("insert_success_stand_threshold", 0.8)
+        )
+        self.success_cube_threshold = float(
+            kwargs.get("insert_success_cube_threshold", 0.9)
+        )
+        self.success_peg_height_threshold = float(
+            kwargs.get("insert_success_peg_height_threshold", 0.9)
+        )
         if robot.__class__.__name__ == "G1":
             global _STAND_HEIGHT
             _STAND_HEIGHT = 1.28
@@ -122,6 +131,16 @@ class Insert(Task):
         reward = (0.5 * (small_control * stand_reward) + 0.5 * cube_target_reward) * (
             0.5 * peg_height_reward + 0.5 * hand_tool_proximity_reward
         )
+        success = bool(
+            stand_reward >= self.success_stand_threshold
+            and min(cube_targets) >= self.success_cube_threshold
+            and min(peg_heights) >= self.success_peg_height_threshold
+        )
+        success_score = min(
+            stand_reward / max(self.success_stand_threshold, 1e-6),
+            min(cube_targets) / max(self.success_cube_threshold, 1e-6),
+            min(peg_heights) / max(self.success_peg_height_threshold, 1e-6),
+        )
 
         return reward, {
             "small_control": small_control,
@@ -129,6 +148,10 @@ class Insert(Task):
             "cube_target_reward": cube_target_reward,
             "hand_tool_proximity_reward": hand_tool_proximity_reward,
             "peg_height_reward": peg_height_reward,
+            "success": success,
+            "success_score": success_score,
+            "success_cube_threshold": self.success_cube_threshold,
+            "success_peg_height_threshold": self.success_peg_height_threshold,
         }
 
     def get_terminated(self):

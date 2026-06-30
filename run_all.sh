@@ -16,10 +16,20 @@ PPO_TRAIN_STEPS=${PPO_TRAIN_STEPS:-1000000}
 EVAL_STEPS=${EVAL_STEPS:-20000}
 PPO_EVAL_EPISODES=${PPO_EVAL_EPISODES:-20}
 NUM_ENVS=${NUM_ENVS:-4}
+PPO_NUM_ENVS=${PPO_NUM_ENVS:-4}
 JAX_PLATFORM=${JAX_PLATFORM:-gpu}
 
 AUX_ON=${AUX_ON:-0.1}
 AUX_OFF=${AUX_OFF:-0.0}
+CONTACT_AUX_ON=${CONTACT_AUX_ON:-0.1}
+CONTACT_LABEL_OVERRIDES=${CONTACT_LABEL_OVERRIDES:-}
+DOOR_SUCCESS_STAND_THRESHOLD=${DOOR_SUCCESS_STAND_THRESHOLD:-0.8}
+DOOR_SUCCESS_DOOR_THRESHOLD=${DOOR_SUCCESS_DOOR_THRESHOLD:-0.8}
+DOOR_SUCCESS_HATCH_THRESHOLD=${DOOR_SUCCESS_HATCH_THRESHOLD:-0.8}
+DOOR_SUCCESS_PASSAGE_THRESHOLD=${DOOR_SUCCESS_PASSAGE_THRESHOLD:-0.8}
+INSERT_SUCCESS_STAND_THRESHOLD=${INSERT_SUCCESS_STAND_THRESHOLD:-0.8}
+INSERT_SUCCESS_CUBE_THRESHOLD=${INSERT_SUCCESS_CUBE_THRESHOLD:-0.9}
+INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD=${INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD:-0.9}
 
 NOISES=${NOISES:-"0.0 0.01 0.02 0.05"}
 DROPS=${DROPS:-"0.0 0.2 0.4 0.6"}
@@ -53,6 +63,7 @@ echo "PPO_TRAIN_STEPS=$PPO_TRAIN_STEPS"
 echo "EVAL_STEPS=$EVAL_STEPS"
 echo "PPO_EVAL_EPISODES=$PPO_EVAL_EPISODES"
 echo "NUM_ENVS=$NUM_ENVS"
+echo "PPO_NUM_ENVS=$PPO_NUM_ENVS"
 echo "JAX_PLATFORM=$JAX_PLATFORM"
 echo "RUN_PPO_TACTILE=$RUN_PPO_TACTILE"
 echo "DRY_RUN=$DRY_RUN"
@@ -65,6 +76,11 @@ train_dreamer_one () {
   local aux_mode="$5"
   local aux_horizon="$6"
   local aux_action="$7"
+  local contact_weight="$8"
+  local contact_mode="$9"
+  local contact_horizon="${10}"
+  local contact_action="${11}"
+  local sensors="${12}"
   local logdir="${RUNS_DIR}/${env}_${variant}_s${seed}"
   local args=(
     --env "${env}"
@@ -75,11 +91,26 @@ train_dreamer_one () {
     --tactile_aux_weight "${aux_weight}"
     --tactile_aux_mode "${aux_mode}"
     --tactile_aux_horizon "${aux_horizon}"
+    --contact_aux_weight "${contact_weight}"
+    --contact_aux_mode "${contact_mode}"
+    --contact_aux_horizon "${contact_horizon}"
+    --contact_label_overrides "${CONTACT_LABEL_OVERRIDES}"
+    --door_success_stand_threshold "${DOOR_SUCCESS_STAND_THRESHOLD}"
+    --door_success_door_threshold "${DOOR_SUCCESS_DOOR_THRESHOLD}"
+    --door_success_hatch_threshold "${DOOR_SUCCESS_HATCH_THRESHOLD}"
+    --door_success_passage_threshold "${DOOR_SUCCESS_PASSAGE_THRESHOLD}"
+    --insert_success_stand_threshold "${INSERT_SUCCESS_STAND_THRESHOLD}"
+    --insert_success_cube_threshold "${INSERT_SUCCESS_CUBE_THRESHOLD}"
+    --insert_success_peg_height_threshold "${INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD}"
+    --sensors "${sensors}"
     --logdir "${logdir}"
   )
 
   if [[ "${aux_action}" != "1" ]]; then
     args+=(--no_tactile_aux_action)
+  fi
+  if [[ "${contact_action}" != "1" ]]; then
+    args+=(--no_contact_aux_action)
   fi
 
   if [[ "$DRY_RUN" != "1" && -f "${logdir}/checkpoint.ckpt" ]]; then
@@ -98,23 +129,35 @@ train_dreamer_one () {
 dreamer_variant_config () {
   local variant="$1"
   case "$variant" in
+    proprio|proprio_only)
+      echo "${AUX_OFF} future 1 1 ${AUX_OFF} future 1 1 __none__"
+      ;;
     base)
-      echo "${AUX_OFF} future 1 1"
+      echo "${AUX_OFF} future 1 1 ${AUX_OFF} future 1 1 tactile"
       ;;
     aux|future1)
-      echo "${AUX_ON} future 1 1"
+      echo "${AUX_ON} future 1 1 ${AUX_OFF} future 1 1 tactile"
       ;;
     recon|current)
-      echo "${AUX_ON} current 1 1"
+      echo "${AUX_ON} current 1 1 ${AUX_OFF} future 1 1 tactile"
       ;;
     future3)
-      echo "${AUX_ON} future 3 1"
+      echo "${AUX_ON} future 3 1 ${AUX_OFF} future 1 1 tactile"
       ;;
     future5)
-      echo "${AUX_ON} future 5 1"
+      echo "${AUX_ON} future 5 1 ${AUX_OFF} future 1 1 tactile"
       ;;
     noact|future1_noact)
-      echo "${AUX_ON} future 1 0"
+      echo "${AUX_ON} future 1 0 ${AUX_OFF} future 1 1 tactile"
+      ;;
+    contact|contact1)
+      echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} future 1 1 tactile"
+      ;;
+    contact3)
+      echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} future 3 1 tactile"
+      ;;
+    both|aux_contact)
+      echo "${AUX_ON} future 1 1 ${CONTACT_AUX_ON} future 1 1 tactile"
       ;;
     *)
       echo "Unknown DREAMER variant: ${variant}" >&2
@@ -137,6 +180,14 @@ eval_dreamer_one () {
     --mass_scale "${mass}"
     --friction_scale "${fric}"
     --results_csv "${RESULTS_CSV}"
+    --contact_label_overrides "${CONTACT_LABEL_OVERRIDES}"
+    --door_success_stand_threshold "${DOOR_SUCCESS_STAND_THRESHOLD}"
+    --door_success_door_threshold "${DOOR_SUCCESS_DOOR_THRESHOLD}"
+    --door_success_hatch_threshold "${DOOR_SUCCESS_HATCH_THRESHOLD}"
+    --door_success_passage_threshold "${DOOR_SUCCESS_PASSAGE_THRESHOLD}"
+    --insert_success_stand_threshold "${INSERT_SUCCESS_STAND_THRESHOLD}"
+    --insert_success_cube_threshold "${INSERT_SUCCESS_CUBE_THRESHOLD}"
+    --insert_success_peg_height_threshold "${INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD}"
   )
 
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -160,6 +211,15 @@ train_ppo_one () {
     --steps "${PPO_TRAIN_STEPS}"
     --logdir "${logdir}"
     --sensors "${sensors}"
+    --num_envs "${PPO_NUM_ENVS}"
+    --contact_label_overrides "${CONTACT_LABEL_OVERRIDES}"
+    --door_success_stand_threshold "${DOOR_SUCCESS_STAND_THRESHOLD}"
+    --door_success_door_threshold "${DOOR_SUCCESS_DOOR_THRESHOLD}"
+    --door_success_hatch_threshold "${DOOR_SUCCESS_HATCH_THRESHOLD}"
+    --door_success_passage_threshold "${DOOR_SUCCESS_PASSAGE_THRESHOLD}"
+    --insert_success_stand_threshold "${INSERT_SUCCESS_STAND_THRESHOLD}"
+    --insert_success_cube_threshold "${INSERT_SUCCESS_CUBE_THRESHOLD}"
+    --insert_success_peg_height_threshold "${INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD}"
   )
 
   if [[ "$DRY_RUN" != "1" && ( -f "${logdir}/ppo_model.zip" || -f "${logdir}/ppo_model" ) ]]; then
@@ -189,6 +249,7 @@ eval_ppo_one () {
     --run_dir "${run_dir}"
     --env "${env}"
     --seed "${seed}"
+    --variant "${variant}"
     --episodes "${PPO_EVAL_EPISODES}"
     --sensors "${sensors}"
     --noise "${noise}"
@@ -196,6 +257,14 @@ eval_ppo_one () {
     --mass_scale "${mass}"
     --friction_scale "${fric}"
     --results_csv "${RESULTS_CSV}"
+    --contact_label_overrides "${CONTACT_LABEL_OVERRIDES}"
+    --door_success_stand_threshold "${DOOR_SUCCESS_STAND_THRESHOLD}"
+    --door_success_door_threshold "${DOOR_SUCCESS_DOOR_THRESHOLD}"
+    --door_success_hatch_threshold "${DOOR_SUCCESS_HATCH_THRESHOLD}"
+    --door_success_passage_threshold "${DOOR_SUCCESS_PASSAGE_THRESHOLD}"
+    --insert_success_stand_threshold "${INSERT_SUCCESS_STAND_THRESHOLD}"
+    --insert_success_cube_threshold "${INSERT_SUCCESS_CUBE_THRESHOLD}"
+    --insert_success_peg_height_threshold "${INSERT_SUCCESS_PEG_HEIGHT_THRESHOLD}"
   )
 
   if [[ "$DRY_RUN" == "1" ]]; then
@@ -210,8 +279,9 @@ eval_ppo_one () {
 for env in $DREAMER_TASKS; do
   for seed in $SEEDS; do
     for variant in $DREAMER_VARIANTS; do
-      read -r aux_weight aux_mode aux_horizon aux_action < <(dreamer_variant_config "$variant") || { FAILS=$((FAILS+1)); continue; }
-      train_dreamer_one "$env" "$variant" "$seed" "$aux_weight" "$aux_mode" "$aux_horizon" "$aux_action" || { echo "[DREAMER TRAIN FAIL] $env $variant s$seed"; FAILS=$((FAILS+1)); }
+      read -r aux_weight aux_mode aux_horizon aux_action contact_weight contact_mode contact_horizon contact_action sensors < <(dreamer_variant_config "$variant") || { FAILS=$((FAILS+1)); continue; }
+      [[ "$sensors" == "__none__" ]] && sensors=""
+      train_dreamer_one "$env" "$variant" "$seed" "$aux_weight" "$aux_mode" "$aux_horizon" "$aux_action" "$contact_weight" "$contact_mode" "$contact_horizon" "$contact_action" "$sensors" || { echo "[DREAMER TRAIN FAIL] $env $variant s$seed"; FAILS=$((FAILS+1)); }
     done
   done
 done

@@ -9,8 +9,11 @@ This repo studies whether a contact-predictive auxiliary objective improves tact
 Core comparison:
 - PPO proprio-only baseline
 - PPO proprio+tactile baseline
+- Dreamer proprio-only baseline
 - Dreamer tactile baseline
-- Dreamer tactile + contact-predictive auxiliary loss
+- Dreamer tactile + future tactile auxiliary loss
+- Dreamer tactile + semantic future contact auxiliary loss
+- Dreamer tactile + combined tactile and contact auxiliary losses
 - Dreamer tactile ablations: current tactile reconstruction, multi-step future tactile prediction, and no-action future tactile prediction
 
 Active tasks:
@@ -26,6 +29,9 @@ Robustness evaluation:
 - tactile dropout
 - mild dynamics variation via mass scaling
 - mild dynamics variation via friction scaling
+
+Analysis outputs include mean, standard error, 95% confidence intervals, per-seed clean-success points, paired seed comparisons against the `base` Dreamer variant, tactile prediction error summaries, and latent contact-probe accuracy, balanced accuracy, AUROC, F1, and class balance.
+Dreamer evaluation rollouts also log held-out `report_eval/contact_probe/*` metrics when enough evaluation transitions have accumulated.
 
 ## Repo Layout
 
@@ -120,6 +126,23 @@ Real smoke test:
 bash run_debug.sh
 ```
 
+## Pilot Experiment
+
+`run_pilot.sh` is the recommended first research run before launching the full matrix. It uses three seeds, three tasks, clean plus one sensory corruption setting, no dynamics sweep, PPO proprio/tactile references, and the main Dreamer controls:
+
+```bash
+bash run_pilot.sh
+```
+
+Default pilot variants:
+- `proprio`: Dreamer without tactile observations
+- `base`: tactile Dreamer without auxiliary loss
+- `aux`: one-step future tactile prediction
+- `recon`: current tactile reconstruction ablation
+- `noact`: future tactile prediction without action conditioning
+- `contact`: one-step semantic future contact prediction
+- `both`: future tactile plus future contact prediction
+
 Useful debug overrides:
 
 ```bash
@@ -179,6 +202,8 @@ TRAIN_STEPS=500000 PPO_TRAIN_STEPS=200000 EVAL_STEPS=5000 PPO_EVAL_EPISODES=5 ba
 NUM_ENVS=2 bash run_all.sh
 RUN_PPO=0 bash run_all.sh
 RUN_DYNAMICS=0 bash run_all.sh
+DOOR_SUCCESS_PASSAGE_THRESHOLD=0.7 bash run_all.sh
+CONTACT_LABEL_OVERRIDES=outputs/results/contact_label_audit_reviewed.csv bash run_all.sh
 DRY_RUN=1 bash run_all.sh
 ```
 
@@ -196,12 +221,52 @@ Default full-run coverage:
 - PPO proprio-only baseline on all 6 tasks when `RUN_PPO=1`
 - PPO tactile baseline on all 6 tasks when `RUN_PPO=1`
 - Dreamer variants are controlled through `DREAMER_VARIANTS`:
+  - `proprio` or `proprio_only`: proprio-only Dreamer without tactile observations
   - `base`: tactile Dreamer without auxiliary loss
   - `aux` or `future1`: one-step future tactile prediction from latent state and action
   - `recon` or `current`: current tactile reconstruction ablation
   - `future3`: three-step future tactile prediction
   - `future5`: five-step future tactile prediction
   - `noact` or `future1_noact`: one-step future tactile prediction without action conditioning
+  - `contact` or `contact1`: one-step future contact-label prediction
+  - `contact3`: three-step future contact-label prediction
+  - `both` or `aux_contact`: combined tactile and contact prediction
+
+## Calibration
+
+Door and Insert success thresholds are configurable and logged as `log_success_*` metrics. Defaults are:
+
+- Door: stand, door openness, hatch openness, and passage thresholds all `0.8`
+- Insert: stand threshold `0.8`, cube-target threshold `0.9`, peg-height threshold `0.9`
+
+Example Door calibration run:
+
+```bash
+DOOR_SUCCESS_PASSAGE_THRESHOLD=0.7 \
+DREAMER_TASKS="h1touch-door-v0" \
+DREAMER_VARIANTS="base aux" \
+SEEDS="0" \
+RUN_PPO=0 \
+RUN_DYNAMICS=0 \
+bash run_all.sh
+```
+
+Contact labels can be audited and hand-reviewed:
+
+```bash
+python cpwm/audit_contact_labels.py \
+  --env h1touch-door-v0 \
+  --steps 5000 \
+  --out outputs/results/contact_label_audit_door.csv
+```
+
+Review the generated CSV, edit the `contact_*` columns, set `reviewed=1`, then pass it back into training/evaluation:
+
+```bash
+CONTACT_LABEL_OVERRIDES=outputs/results/contact_label_audit_door.csv bash run_all.sh
+```
+
+Runs log `log_contact_label_override_used` and `log_contact_label_unknown_count` so you can verify whether reviewed labels were used and whether the fallback rules still see uncategorized contacts.
 
 ## Manual Commands
 
@@ -217,6 +282,19 @@ python cpwm/train_dreamer.py \
   --logdir outputs/runs/h1touch-door-v0_base_s0
 ```
 
+Train proprio-only Dreamer baseline:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --sensors "" \
+  --tactile_aux_weight 0.0 \
+  --logdir outputs/runs/h1touch-door-v0_proprio_s0
+```
+
 Train auxiliary:
 
 ```bash
@@ -227,6 +305,33 @@ python cpwm/train_dreamer.py \
   --num_envs 4 \
   --tactile_aux_weight 0.1 \
   --logdir outputs/runs/h1touch-door-v0_aux_s0
+```
+
+Train semantic contact auxiliary:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --contact_aux_weight 0.1 \
+  --contact_aux_mode future \
+  --contact_aux_horizon 1 \
+  --logdir outputs/runs/h1touch-door-v0_contact_s0
+```
+
+Train combined tactile and contact auxiliary:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --contact_aux_weight 0.1 \
+  --logdir outputs/runs/h1touch-door-v0_both_s0
 ```
 
 Train ablation variants:
@@ -295,8 +400,20 @@ python cpwm/train_ppo.py \
   --env h1touch-walk-v0 \
   --seed 0 \
   --steps 1000000 \
+  --num_envs 4 \
   --logdir outputs/runs/h1touch-walk-v0_ppo_proprio_s0
 ```
+
+PPO uses vectorized environments and observation normalization by default, saving `vecnormalize.pkl` next to the model so evaluation can reuse the same normalization statistics.
+
+PPO hyperparameter sweeps are available through:
+
+```bash
+DRY_RUN=1 bash run_ppo_sweep.sh
+bash run_ppo_sweep.sh
+```
+
+The default sweep covers `balanced`, `large_entropy`, and `long_rollout` PPO settings across proprio and tactile variants. Results go to `outputs/results/ppo_sweep.csv`.
 
 Train PPO tactile baseline:
 
@@ -330,6 +447,10 @@ python cpwm/plot_results.py \
   --csv outputs/results/results.csv \
   --outdir outputs/figs
 ```
+
+This also writes:
+- `outputs/figs/clean_success_summary.csv`
+- `outputs/figs/paired_success_comparisons.csv`
 
 Generate summary analysis:
 

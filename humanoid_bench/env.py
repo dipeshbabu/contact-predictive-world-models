@@ -1,3 +1,4 @@
+import csv
 import os
 
 import numpy as np
@@ -99,6 +100,9 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
 
         self.mass_scale = float(kwargs.get("mass_scale", 1.0) or 1.0)
         self.friction_scale = float(kwargs.get("friction_scale", 1.0) or 1.0)
+        self.contact_label_overrides_path = str(
+            kwargs.get("contact_label_overrides", "") or ""
+        )
 
         MujocoEnv.__init__(
             self,
@@ -180,6 +184,9 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             self.task.dof,
             len(data.qpos),
         )
+        self._contact_label_overrides = self._load_contact_label_overrides(
+            self.contact_label_overrides_path
+        )
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.task.step(action)
@@ -196,48 +203,128 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             "contact_torso": 0.0,
             "contact_object": 0.0,
             "contact_robot_object": 0.0,
+            "contact_label_override_used": 0.0,
+            "contact_label_unknown_count": 0.0,
         }
+
+        for i in range(count):
+            contact = self.data.contact[i]
+            geom_names, body_names = self._contact_pair_names(contact)
+            pair_key = self._contact_pair_key(geom_names)
+            pair_labels = self._contact_label_overrides.get(pair_key)
+            if pair_labels is not None:
+                labels["contact_label_override_used"] = 1.0
+            else:
+                pair_labels = self._contact_rule_labels(geom_names, body_names)
+            for key in (
+                "contact_hand",
+                "contact_foot",
+                "contact_torso",
+                "contact_object",
+                "contact_robot_object",
+            ):
+                labels[key] = max(labels[key], float(pair_labels.get(key, 0.0)))
+            labels["contact_label_unknown_count"] += float(
+                pair_labels.get("contact_unknown", 0.0)
+            )
+        return labels
+
+    def _load_contact_label_overrides(self, path):
+        if not path:
+            return {}
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"contact_label_overrides not found: {path}")
+        overrides = {}
+        with open(path, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            required = {"geom1", "geom2"}
+            missing = required - set(reader.fieldnames or [])
+            if missing:
+                raise ValueError(
+                    f"contact_label_overrides missing columns: {sorted(missing)}"
+                )
+            for row in reader:
+                key = self._contact_pair_key((row.get("geom1", ""), row.get("geom2", "")))
+                overrides[key] = {
+                    name: float(row.get(name, 0.0) or 0.0)
+                    for name in (
+                        "contact_hand",
+                        "contact_foot",
+                        "contact_torso",
+                        "contact_object",
+                        "contact_robot_object",
+                    )
+                }
+        return overrides
+
+    def _contact_pair_names(self, contact):
+        geom_names = []
+        body_names = []
+        for geom_id in (int(contact.geom1), int(contact.geom2)):
+            geom_names.append(
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or ""
+            )
+            body_id = int(self.model.geom_bodyid[geom_id])
+            body_names.append(
+                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
+            )
+        return tuple(geom_names), tuple(body_names)
+
+    @staticmethod
+    def _contact_pair_key(geom_names):
+        return tuple(sorted(str(name or "") for name in geom_names))
+
+    @staticmethod
+    def _contact_rule_labels(geom_names, body_names):
+        names = [str(name or "").lower() for name in (*geom_names, *body_names)]
+
+        def any_token(tokens):
+            return any(any(token in name for token in tokens) for name in names)
+
         object_tokens = (
-            "object", "box", "cube", "block", "peg", "door", "hatch",
-            "cabinet", "drawer", "handle", "target", "table",
+            "object",
+            "box",
+            "cube",
+            "block",
+            "peg",
+            "door",
+            "hatch",
+            "cabinet",
+            "drawer",
+            "handle",
+            "target",
+            "table",
         )
         hand_tokens = (
-            "hand", "palm", "finger", "thumb", "wrist", "lh_", "rh_",
-            "left_f", "right_f", "left_th", "right_th",
+            "hand",
+            "palm",
+            "finger",
+            "thumb",
+            "wrist",
+            "lh_",
+            "rh_",
+            "left_f",
+            "right_f",
+            "left_th",
+            "right_th",
         )
         foot_tokens = ("foot", "ankle")
         torso_tokens = ("torso", "pelvis", "waist", "hip")
 
-        def has_token(names, tokens):
-            text = " ".join(name for name in names if name).lower()
-            return any(token in text for token in tokens)
-
-        for i in range(count):
-            contact = self.data.contact[i]
-            geom_names = [
-                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom1)) or "",
-                mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_GEOM, int(contact.geom2)) or "",
-            ]
-            body_names = []
-            for geom_id in (int(contact.geom1), int(contact.geom2)):
-                body_id = int(self.model.geom_bodyid[geom_id])
-                body_names.append(
-                    mujoco.mj_id2name(self.model, mujoco.mjtObj.mjOBJ_BODY, body_id) or ""
-                )
-            names = [*geom_names, *body_names]
-            hand = has_token(names, hand_tokens)
-            foot = has_token(names, foot_tokens)
-            torso = has_token(names, torso_tokens)
-            obj = has_token(names, object_tokens)
-            labels["contact_hand"] = max(labels["contact_hand"], float(hand))
-            labels["contact_foot"] = max(labels["contact_foot"], float(foot))
-            labels["contact_torso"] = max(labels["contact_torso"], float(torso))
-            labels["contact_object"] = max(labels["contact_object"], float(obj))
-            labels["contact_robot_object"] = max(
-                labels["contact_robot_object"],
-                float(obj and (hand or foot or torso)),
-            )
-        return labels
+        hand = any_token(hand_tokens)
+        foot = any_token(foot_tokens)
+        torso = any_token(torso_tokens)
+        obj = any_token(object_tokens)
+        robot = hand or foot or torso
+        unknown = not (hand or foot or torso or obj)
+        return {
+            "contact_hand": float(hand),
+            "contact_foot": float(foot),
+            "contact_torso": float(torso),
+            "contact_object": float(obj),
+            "contact_robot_object": float(obj and robot),
+            "contact_unknown": float(unknown),
+        }
 
     def reset_model(self):
         if self.keyframe is not None:

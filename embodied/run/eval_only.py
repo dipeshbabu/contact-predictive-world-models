@@ -20,11 +20,30 @@ def eval_only(make_agent, make_env, make_logger, args):
     agg = embodied.Agg()
     epstats = embodied.Agg()
     episodes = defaultdict(embodied.Agg)
+    report_transitions = defaultdict(list)
     should_log = embodied.when.Clock(args.log_every)
+
+    def make_report_batch():
+        length = min(getattr(args, "batch_length", 64), 64)
+        for transitions in report_transitions.values():
+            if len(transitions) < max(6, length // 2):
+                continue
+            chunk = transitions[-length:]
+            keys = set(chunk[0])
+            for tran in chunk[1:]:
+                keys &= set(tran)
+            return {
+                key: np.stack([tran[key] for tran in chunk], 0)[None]
+                for key in sorted(keys)
+            }
+        return None
 
     @embodied.timer.section("log_step")
     def log_step(tran, worker):
         episode = episodes[worker]
+        if tran["is_first"]:
+            report_transitions[worker].clear()
+        report_transitions[worker].append({k: np.asarray(v) for k, v in tran.items()})
         episode.add("score", tran["reward"], agg="sum")
         episode.add("length", 1, agg="sum")
         episode.add("rewards", tran["reward"], agg="stack")
@@ -74,6 +93,9 @@ def eval_only(make_agent, make_env, make_logger, args):
         if should_log(step):
             logger.add(agg.result())
             logger.add(epstats.result(), prefix="epstats")
+            batch = make_report_batch()
+            if batch is not None:
+                logger.add(agent.report(batch), prefix="report_eval")
             logger.add(embodied.timer.stats(), prefix="timer")
             logger.add(usage.stats(), prefix="usage")
             logger.write(fps=True)

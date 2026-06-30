@@ -10,7 +10,9 @@ from pathlib import Path
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--env", required=True, help="HumanoidBench env id, e.g. h1touch-door-v0")
+    ap.add_argument(
+        "--env", required=True, help="HumanoidBench env id, e.g. h1touch-door-v0"
+    )
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--steps", type=int, default=2_000_000)
     ap.add_argument("--num_envs", type=int, default=4)
@@ -27,14 +29,49 @@ def main() -> None:
         action="store_true",
         help="Disable action conditioning in the tactile auxiliary head",
     )
+    ap.add_argument("--contact_aux_weight", type=float, default=0.0)
+    ap.add_argument(
+        "--contact_aux_mode",
+        choices=("future", "current"),
+        default="future",
+        help="future predicts future contact labels; current is contact reconstruction",
+    )
+    ap.add_argument("--contact_aux_horizon", type=int, default=1)
+    ap.add_argument(
+        "--no_contact_aux_action",
+        action="store_true",
+        help="Disable action conditioning in the contact auxiliary head",
+    )
     ap.add_argument("--logdir", required=True)
     ap.add_argument("--jax_platform", default="gpu")
-    ap.add_argument("--use_rgb", action="store_true", help="Optional RGB mode if your env supports it")
+    ap.add_argument(
+        "--sensors",
+        default=None,
+        help="Comma-separated humanoid sensors. Use an empty string for proprio-only.",
+    )
+    ap.add_argument("--door_success_stand_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_door_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_hatch_threshold", type=float, default=0.8)
+    ap.add_argument("--door_success_passage_threshold", type=float, default=0.8)
+    ap.add_argument("--insert_success_stand_threshold", type=float, default=0.8)
+    ap.add_argument("--insert_success_cube_threshold", type=float, default=0.9)
+    ap.add_argument("--insert_success_peg_height_threshold", type=float, default=0.9)
+    ap.add_argument(
+        "--contact_label_overrides",
+        default="",
+        help="Optional CSV with hand-reviewed contact labels for geom/body pairs.",
+    )
+    ap.add_argument(
+        "--use_rgb", action="store_true", help="Optional RGB mode if your env supports it"
+    )
     ap.add_argument("--dry_run", action="store_true")
     args = ap.parse_args()
 
     task = f"humanoid_{args.env}"
-    sensors = "tactile,image" if args.use_rgb else "tactile"
+    if args.sensors is not None:
+        sensors = args.sensors
+    else:
+        sensors = "tactile,image" if args.use_rgb else "tactile"
     repo_root = Path(__file__).resolve().parent.parent
 
     cmd = [
@@ -51,6 +88,22 @@ def main() -> None:
         "--env.humanoid.sensors", sensors,
         "--env.humanoid.tactile_flat", "True",
         "--env.humanoid.tactile_concat", "True",
+        "--env.humanoid.door_success_stand_threshold",
+        str(args.door_success_stand_threshold),
+        "--env.humanoid.door_success_door_threshold",
+        str(args.door_success_door_threshold),
+        "--env.humanoid.door_success_hatch_threshold",
+        str(args.door_success_hatch_threshold),
+        "--env.humanoid.door_success_passage_threshold",
+        str(args.door_success_passage_threshold),
+        "--env.humanoid.insert_success_stand_threshold",
+        str(args.insert_success_stand_threshold),
+        "--env.humanoid.insert_success_cube_threshold",
+        str(args.insert_success_cube_threshold),
+        "--env.humanoid.insert_success_peg_height_threshold",
+        str(args.insert_success_peg_height_threshold),
+        "--env.humanoid.contact_label_overrides",
+        args.contact_label_overrides,
     ]
 
     if args.tactile_aux_weight > 0:
@@ -59,6 +112,13 @@ def main() -> None:
             "--tactile_aux_mode", args.tactile_aux_mode,
             "--tactile_aux_horizon", str(args.tactile_aux_horizon),
             "--tactile_aux_action", str(not args.no_tactile_aux_action),
+        ]
+    if args.contact_aux_weight > 0:
+        cmd += [
+            "--contact_aux_weight", str(args.contact_aux_weight),
+            "--contact_aux_mode", args.contact_aux_mode,
+            "--contact_aux_horizon", str(args.contact_aux_horizon),
+            "--contact_aux_action", str(not args.no_contact_aux_action),
         ]
 
     print("[TRAIN CMD]", " ".join(cmd))

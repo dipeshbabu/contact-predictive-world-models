@@ -54,6 +54,8 @@ class FromGymnasium(embodied.Env):
             "is_terminal": embodied.Space(bool),
             "success": embodied.Space(np.float32),
             "success_subtasks": embodied.Space(np.float32),
+            "log_success_score": embodied.Space(np.float32),
+            "log_success_threshold": embodied.Space(np.float32),
             "log_contact_any": embodied.Space(np.float32),
             "log_contact_count": embodied.Space(np.float32),
             "log_contact_hand": embodied.Space(np.float32),
@@ -61,6 +63,8 @@ class FromGymnasium(embodied.Env):
             "log_contact_torso": embodied.Space(np.float32),
             "log_contact_object": embodied.Space(np.float32),
             "log_contact_robot_object": embodied.Space(np.float32),
+            "log_contact_label_override_used": embodied.Space(np.float32),
+            "log_contact_label_unknown_count": embodied.Space(np.float32),
         }
         
 
@@ -118,6 +122,13 @@ class FromGymnasium(embodied.Env):
             is_terminal=is_terminal,
             success=np.float32(success),
             success_subtasks=np.float32(success_subtasks),
+            log_success_score=np.float32(contact_info.get("success_score", 0.0)),
+            log_success_threshold=np.float32(
+                max(
+                    float(contact_info.get("success_door_threshold", 0.0)),
+                    float(contact_info.get("success_cube_threshold", 0.0)),
+                )
+            ),
             log_contact_any=np.float32(contact_info.get("contact_any", 0.0)),
             log_contact_count=np.float32(contact_info.get("contact_count", 0.0)),
             log_contact_hand=np.float32(contact_info.get("contact_hand", 0.0)),
@@ -126,6 +137,12 @@ class FromGymnasium(embodied.Env):
             log_contact_object=np.float32(contact_info.get("contact_object", 0.0)),
             log_contact_robot_object=np.float32(
                 contact_info.get("contact_robot_object", 0.0)
+            ),
+            log_contact_label_override_used=np.float32(
+                contact_info.get("contact_label_override_used", 0.0)
+            ),
+            log_contact_label_unknown_count=np.float32(
+                contact_info.get("contact_label_unknown_count", 0.0)
             ),
         )
         if self._is_eval:

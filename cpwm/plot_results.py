@@ -2,26 +2,84 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from pathlib import Path
-from collections import defaultdict
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 
-def _to_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
+def _ci95(series: pd.Series) -> float:
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    n = len(values)
+    if n <= 1:
+        return 0.0
+    return float(1.96 * values.std(ddof=1) / np.sqrt(n))
+
+
+def _sem(series: pd.Series) -> float:
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    n = len(values)
+    if n <= 1:
+        return 0.0
+    return float(values.std(ddof=1) / np.sqrt(n))
+
+
+def _summary(df: pd.DataFrame, group_cols: list[str]) -> pd.DataFrame:
+    rows = []
+    for keys, sub in df.groupby(group_cols, dropna=False):
+        if not isinstance(keys, tuple):
+            keys = (keys,)
+        values = sub["success"].dropna()
+        row = dict(zip(group_cols, keys))
+        row.update(
+            n=int(values.count()),
+            mean_success=float(values.mean()) if len(values) else np.nan,
+            sem_success=_sem(values),
+            ci95_success=_ci95(values),
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _paired(clean: pd.DataFrame, baseline: str) -> pd.DataFrame:
+    rows = []
+    keys = ["env", "seed"]
+    for env, sub in clean.groupby("env"):
+        pivot = sub.pivot_table(
+            index=keys, columns="variant", values="success", aggfunc="mean"
+        )
+        if baseline not in pivot:
+            continue
+        for variant in sorted(c for c in pivot.columns if c != baseline):
+            diff = (pivot[variant] - pivot[baseline]).dropna()
+            if diff.empty:
+                continue
+            rows.append(
+                {
+                    "env": env,
+                    "baseline": baseline,
+                    "variant": variant,
+                    "n_pairs": int(diff.count()),
+                    "mean_diff": float(diff.mean()),
+                    "sem_diff": _sem(diff),
+                    "ci95_diff": _ci95(diff),
+                    "wins": int((diff > 0).sum()),
+                    "losses": int((diff < 0).sum()),
+                    "ties": int((diff == 0).sum()),
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default="outputs/results/results.csv")
     ap.add_argument("--outdir", default="outputs/figs")
+    ap.add_argument("--baseline", default="base")
     args = ap.parse_args()
 
     csv_path = Path(args.csv)
@@ -31,81 +89,95 @@ def main():
     if not csv_path.exists():
         raise FileNotFoundError(f"Missing results CSV: {csv_path}")
 
-    rows = []
-    with csv_path.open("r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for r in reader:
-            r["success_f"] = _to_float(r.get("success", ""))
-            r["noise_f"] = _to_float(r.get("proprio_noise", "0"))
-            r["drop_f"] = _to_float(r.get("tactile_dropout", "0"))
-            r["mass_f"] = _to_float(r.get("mass_scale", "1"))
-            r["fric_f"] = _to_float(r.get("friction_scale", "1"))
-            if (
-                r["success_f"] is None
-                or r["noise_f"] is None
-                or r["drop_f"] is None
-                or r["mass_f"] is None
-                or r["fric_f"] is None
-            ):
+    df = pd.read_csv(csv_path)
+    for col, default in (
+        ("success", np.nan),
+        ("proprio_noise", 0.0),
+        ("tactile_dropout", 0.0),
+        ("mass_scale", 1.0),
+        ("friction_scale", 1.0),
+        ("seed", np.nan),
+    ):
+        if col not in df:
+            df[col] = default
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(default)
+    df = df[df["success"].notna()].copy()
+
+    sensory = df[(df["mass_scale"] == 1.0) & (df["friction_scale"] == 1.0)].copy()
+    clean = sensory[
+        (sensory["proprio_noise"] == 0.0) & (sensory["tactile_dropout"] == 0.0)
+    ].copy()
+
+    if clean.empty:
+        print(f"wrote figures to: {outdir}")
+        return
+
+    clean_summary = _summary(clean, ["env", "variant"]).sort_values(["env", "variant"])
+    clean_summary.to_csv(outdir / "clean_success_summary.csv", index=False)
+    paired = _paired(clean, args.baseline)
+    paired.to_csv(outdir / "paired_success_comparisons.csv", index=False)
+
+    envs = sorted(clean_summary["env"].unique())
+    variants = sorted(clean_summary["variant"].unique())
+    x = np.arange(len(envs), dtype=float)
+    width = min(0.8 / max(len(variants), 1), 0.25)
+
+    plt.figure(figsize=(max(7, len(envs) * 1.2), 4.8))
+    for i, variant in enumerate(variants):
+        vals = []
+        errs = []
+        xpos = x + (i - (len(variants) - 1) / 2) * width
+        for env in envs:
+            row = clean_summary[
+                (clean_summary["env"] == env) & (clean_summary["variant"] == variant)
+            ]
+            vals.append(float(row["mean_success"].iloc[0]) if not row.empty else 0.0)
+            errs.append(float(row["ci95_success"].iloc[0]) if not row.empty else 0.0)
+        plt.bar(xpos, vals, width=width, yerr=errs, capsize=3, label=variant, alpha=0.8)
+        for env_idx, env in enumerate(envs):
+            pts = clean[(clean["env"] == env) & (clean["variant"] == variant)]
+            if pts.empty:
                 continue
-            rows.append(r)
-
-    sensory_rows = [
-        r for r in rows if abs(r["mass_f"] - 1.0) < 1e-12 and abs(r["fric_f"] - 1.0) < 1e-12
-    ]
-    clean = [r for r in sensory_rows if abs(r["noise_f"]) < 1e-12 and abs(r["drop_f"]) < 1e-12]
-    if clean:
-        agg = defaultdict(list)
-        for r in clean:
-            agg[(r["env"], r["variant"])].append(r["success_f"])
-
-        envs = sorted({e for (e, _) in agg.keys()})
-        variants = sorted({v for (_, v) in agg.keys()})
-
-        x = list(range(len(envs)))
-        width = 0.35 if len(variants) == 2 else 0.25
-
-        plt.figure()
-        for i, v in enumerate(variants):
-            vals = []
-            for e in envs:
-                xs = agg.get((e, v), [])
-                vals.append(sum(xs) / len(xs) if xs else 0.0)
-            xpos = [xi + (i - (len(variants) - 1) / 2) * width for xi in x]
-            plt.bar(xpos, vals, width=width, label=v)
-
-        plt.xticks(x, envs, rotation=30, ha="right")
-        plt.ylabel("Success")
-        plt.title("Clean success by task and variant")
-        plt.legend()
-        plt.tight_layout()
-        plt.savefig(outdir / "clean_success_bar.png", dpi=200)
-        plt.close()
-
-    by_ev = defaultdict(list)
-    for r in sensory_rows:
-        by_ev[(r["env"], r["variant"])].append(r)
-
-    for (env, variant), rs in by_ev.items():
-        bucket = defaultdict(list)
-        for r in rs:
-            bucket[(r["noise_f"], r["drop_f"])].append(r["success_f"])
-
-        drops = sorted({d for (_, d) in bucket.keys()})
-        plt.figure()
-        for d in drops:
-            pts = sorted(
-                [(n, sum(bucket[(n, d)]) / len(bucket[(n, d)]))
-                 for (n, dd) in bucket.keys() if dd == d]
+            jitter = np.linspace(-0.25, 0.25, len(pts)) * width
+            plt.scatter(
+                np.full(len(pts), xpos[env_idx]) + jitter,
+                pts["success"],
+                s=16,
+                color="black",
+                alpha=0.55,
+                linewidths=0,
             )
-            xs = [p[0] for p in pts]
-            ys = [p[1] for p in pts]
-            plt.plot(xs, ys, marker="o", label=f"drop={d}")
+
+    plt.xticks(x, envs, rotation=30, ha="right")
+    plt.ylabel("Success")
+    plt.title("Clean success by task and variant")
+    plt.legend(fontsize=8)
+    plt.tight_layout()
+    plt.savefig(outdir / "clean_success_bar.png", dpi=200)
+    plt.close()
+
+    by_ev = sensory.groupby(["env", "variant"], dropna=False)
+    for (env, variant), sub in by_ev:
+        summary = _summary(sub, ["proprio_noise", "tactile_dropout"])
+        if summary.empty:
+            continue
+        drops = sorted(summary["tactile_dropout"].unique())
+        plt.figure(figsize=(6.0, 4.2))
+        for drop in drops:
+            pts = summary[summary["tactile_dropout"] == drop].sort_values("proprio_noise")
+            plt.errorbar(
+                pts["proprio_noise"],
+                pts["mean_success"],
+                yerr=pts["ci95_success"],
+                marker="o",
+                capsize=3,
+                label=f"drop={drop}",
+            )
 
         plt.xlabel("Proprio noise std")
         plt.ylabel("Success")
         plt.title(f"{env} / {variant} robustness")
-        plt.legend()
+        plt.legend(fontsize=8)
         plt.tight_layout()
         plt.savefig(outdir / f"{env}_{variant}_robustness.png", dpi=200)
         plt.close()

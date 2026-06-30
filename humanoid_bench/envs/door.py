@@ -49,6 +49,18 @@ class Door(Task):
 
     def __init__(self, robot=None, env=None, **kwargs):
         super().__init__(robot, env, **kwargs)
+        self.success_stand_threshold = float(
+            kwargs.get("door_success_stand_threshold", 0.8)
+        )
+        self.success_door_threshold = float(
+            kwargs.get("door_success_door_threshold", 0.8)
+        )
+        self.success_hatch_threshold = float(
+            kwargs.get("door_success_hatch_threshold", 0.8)
+        )
+        self.success_passage_threshold = float(
+            kwargs.get("door_success_passage_threshold", 0.8)
+        )
         if robot.__class__.__name__ == "G1":
             global _STAND_HEIGHT
             _STAND_HEIGHT = 1.28
@@ -121,6 +133,18 @@ class Door(Task):
             + 0.05 * hand_hatch_proximity_reward
             + 0.35 * passage_reward
         )
+        success = bool(
+            stand_reward >= self.success_stand_threshold
+            and door_openness_reward >= self.success_door_threshold
+            and door_hatch_openness_reward >= self.success_hatch_threshold
+            and passage_reward >= self.success_passage_threshold
+        )
+        success_score = min(
+            stand_reward / max(self.success_stand_threshold, 1e-6),
+            door_openness_reward / max(self.success_door_threshold, 1e-6),
+            door_hatch_openness_reward / max(self.success_hatch_threshold, 1e-6),
+            passage_reward / max(self.success_passage_threshold, 1e-6),
+        )
 
         return reward, {
             "stand_reward": stand_reward,
@@ -129,6 +153,11 @@ class Door(Task):
             "door_hatch_openness_reward": door_hatch_openness_reward,
             "hand_hatch_proximity_reward": hand_hatch_proximity_reward,
             "passage_reward": passage_reward,
+            "success": success,
+            "success_score": success_score,
+            "success_door_threshold": self.success_door_threshold,
+            "success_hatch_threshold": self.success_hatch_threshold,
+            "success_passage_threshold": self.success_passage_threshold,
         }
 
     def get_terminated(self):
