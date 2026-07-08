@@ -31,7 +31,7 @@ from . import ninjax as nj
 # from . import ssm
 
 
-CONTACT_AUX_KEYS = (
+BASE_CONTACT_AUX_KEYS = (
     "log_contact_any",
     "log_contact_hand",
     "log_contact_foot",
@@ -39,6 +39,24 @@ CONTACT_AUX_KEYS = (
     "log_contact_object",
     "log_contact_robot_object",
 )
+RICH_CONTACT_AUX_KEYS = (
+    "log_contact_left_hand",
+    "log_contact_right_hand",
+    "log_contact_left_foot",
+    "log_contact_right_foot",
+    "log_contact_hand_object",
+    "log_contact_foot_floor",
+    "log_contact_robot_floor",
+    "log_contact_object_table",
+)
+CONTACT_AUX_KEYS = BASE_CONTACT_AUX_KEYS + RICH_CONTACT_AUX_KEYS
+
+
+def contact_aux_keys(config):
+    keys = list(BASE_CONTACT_AUX_KEYS)
+    if bool(getattr(config, "contact_aux_rich_labels", False)):
+        keys += list(RICH_CONTACT_AUX_KEYS)
+    return tuple(keys)
 
 
 @jaxagent.Wrapper
@@ -102,7 +120,7 @@ class Agent(nj.Module):
         raw_data = data
         data = self.preprocess(data)
         if getattr(self.config, "contact_aux_weight", 0.0) > 0:
-            for key in CONTACT_AUX_KEYS:
+            for key in self.wm.contact_aux_keys:
                 if key in raw_data:
                     data[key] = raw_data[key]
         for key in ignore_inputs:
@@ -174,19 +192,35 @@ class WorldModel(nj.Module):
             "reward": nets.MLP((), **config.reward_head, name="rew"),
             "cont": nets.MLP((), **config.cont_head, name="cont"),
         }
+        self.contact_aux_keys = contact_aux_keys(config)
         self.tactile_aux_head = None
-        self.contact_aux_head = None
+        self.tactile_group_aux_head = None
+        self.contact_aux_heads = []
         # Optional auxiliary head: predict next-step tactile vector from current latent features.
         if "tactile" in obs_space and getattr(config, "tactile_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "tactile_aux_horizon", 1))
             if horizon < 1:
                 raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
             mode = str(getattr(config, "tactile_aux_mode", "future"))
-            pred_horizon = 1 if mode == "current" else horizon
+            pred_horizon = 1 if mode in ("current", "masked") else horizon
             self.tactile_aux_head = nets.MLP(
                 (pred_horizon, *obs_space["tactile"].shape),
                 **config.tactile_aux_head,
                 name="tactile_next",
+            )
+        if "tactile" in obs_space and getattr(config, "tactile_group_aux_weight", 0.0) > 0:
+            horizon = int(getattr(config, "tactile_aux_horizon", 1))
+            groups = int(getattr(config, "tactile_aux_groups", 8))
+            if horizon < 1:
+                raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
+            if groups < 1:
+                raise ValueError(f"tactile_aux_groups must be >= 1, got {groups}")
+            mode = str(getattr(config, "tactile_aux_mode", "future"))
+            pred_horizon = 1 if mode in ("current", "masked") else horizon
+            self.tactile_group_aux_head = nets.MLP(
+                (pred_horizon, groups),
+                **config.tactile_group_aux_head,
+                name="tactile_group_next",
             )
         if getattr(config, "contact_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "contact_aux_horizon", 1))
@@ -194,11 +228,17 @@ class WorldModel(nj.Module):
                 raise ValueError(f"contact_aux_horizon must be >= 1, got {horizon}")
             mode = str(getattr(config, "contact_aux_mode", "future"))
             pred_horizon = 1 if mode == "current" else horizon
-            self.contact_aux_head = nets.MLP(
-                (pred_horizon, len(CONTACT_AUX_KEYS)),
-                **config.contact_aux_head,
-                name="contact_next",
-            )
+            ensemble = int(getattr(config, "contact_aux_ensemble", 1))
+            if ensemble < 1:
+                raise ValueError(f"contact_aux_ensemble must be >= 1, got {ensemble}")
+            self.contact_aux_heads = [
+                nets.MLP(
+                    (pred_horizon, len(self.contact_aux_keys)),
+                    **config.contact_aux_head,
+                    name=f"contact_next_{idx}",
+                )
+                for idx in range(ensemble)
+            ]
 
         self.opt = jaxutils.Optimizer(name="model_opt", **config.model_opt)
         scales = self.config.loss_scales.copy()
@@ -209,8 +249,16 @@ class WorldModel(nj.Module):
         self.scales = scales
         if "tactile_aux" not in self.scales:
             self.scales["tactile_aux"] = float(self.config.tactile_aux_weight)
+        if "tactile_group_aux" not in self.scales:
+            self.scales["tactile_group_aux"] = float(
+                getattr(self.config, "tactile_group_aux_weight", 0.0)
+            )
         if "contact_aux" not in self.scales:
             self.scales["contact_aux"] = float(self.config.contact_aux_weight)
+        if "contact_imagine_aux" not in self.scales:
+            self.scales["contact_imagine_aux"] = float(
+                getattr(self.config, "contact_imagine_weight", 0.0)
+            )
 
     def initial(self, batch_size):
         bs = batch_size
@@ -225,8 +273,9 @@ class WorldModel(nj.Module):
         modules = [self.encoder, self.rssm, *self.heads.values()]
         if self.tactile_aux_head is not None:
             modules.append(self.tactile_aux_head)
-        if self.contact_aux_head is not None:
-            modules.append(self.contact_aux_head)
+        if self.tactile_group_aux_head is not None:
+            modules.append(self.tactile_group_aux_head)
+        modules += list(self.contact_aux_heads)
         mets, (outs, carry, metrics) = self.opt(
             modules, self.loss, data, carry, ignore_inputs, has_aux=True
         )
@@ -235,6 +284,7 @@ class WorldModel(nj.Module):
 
     def loss(self, data, carry, ignore_inputs=()):
         metrics = {}
+        prev_carry = carry
         states, feats, carry = self.observe(data, carry)
 
         dists = {}
@@ -254,18 +304,30 @@ class WorldModel(nj.Module):
             losses[key] = loss
 
         # Auxiliary tactile prediction loss (self-supervised).
-        if self.tactile_aux_head is not None and "tactile" in data:
-            # Predict tactile targets from posterior latent state z_t and
-            # optionally action a_t. Future targets train contact dynamics,
-            # while current targets provide the tactile reconstruction ablation.
-            # This makes the auxiliary signal target contact dynamics instead of
-            # simply reconstructing the current observation embedding.
+        if (
+            self.tactile_aux_head is not None
+            or self.tactile_group_aux_head is not None
+        ) and "tactile" in data:
             mode = str(getattr(self.config, "tactile_aux_mode", "future"))
             horizon = int(getattr(self.config, "tactile_aux_horizon", 1))
-            if mode not in ("future", "current"):
+            if mode not in ("future", "current", "masked"):
                 raise NotImplementedError(f"Unknown tactile_aux_mode: {mode}")
-            if mode == "current":
+            if mode in ("current", "masked"):
                 horizon = 1
+
+            aux_feats = feats
+            if mode == "masked":
+                prob = float(getattr(self.config, "tactile_mask_prob", 0.25))
+                mask = jax.random.bernoulli(nj.rng(), prob, data["tactile"].shape)
+                masked_data = {
+                    **data,
+                    "tactile": jnp.where(
+                        mask, jnp.zeros_like(data["tactile"]), data["tactile"]
+                    ),
+                }
+                _, aux_feats, _ = self.observe(masked_data, prev_carry)
+                metrics["tactile_aux_mask_rate"] = mask.astype(f32).mean()
+
             source_len = data["tactile"].shape[1]
             if mode == "future":
                 source_len -= horizon
@@ -276,11 +338,15 @@ class WorldModel(nj.Module):
                     f"horizon={horizon}."
                 )
 
-            stoch = feats["stoch"][:, :source_len]
+            stoch = aux_feats["stoch"][:, :source_len]
             stoch = stoch.reshape((*stoch.shape[:2], -1))
-            parts = [feats["deter"][:, :source_len], stoch]
+            parts = [aux_feats["deter"][:, :source_len], stoch]
             use_action = bool(getattr(self.config, "tactile_aux_action", True))
-            actions = {key: data[key][:, :source_len] for key in self.act_space if key in data}
+            actions = {
+                key: data[key][:, :source_len]
+                for key in self.act_space
+                if key in data
+            }
             if use_action and actions:
                 act = jaxutils.concat_dict(actions).astype(f32)
                 act = act.reshape((*act.shape[:2], -1))
@@ -297,7 +363,8 @@ class WorldModel(nj.Module):
                 )
                 valid = jnp.stack(
                     [
-                        1.0 - data["is_first"][:, offset : offset + source_len].astype(f32)
+                        1.0
+                        - data["is_first"][:, offset : offset + source_len].astype(f32)
                         for offset in range(1, horizon + 1)
                     ],
                     axis=2,
@@ -307,35 +374,63 @@ class WorldModel(nj.Module):
                 target = data["tactile"][:, :source_len, None].astype(f32)
                 valid = 1.0 - data["is_first"][:, :source_len].astype(f32)
 
-            pred_dist = self.tactile_aux_head(feats_t)
-            aux = -pred_dist.log_prob(target)
-            aux = aux * valid
-            losses["tactile_aux"] = aux
-            metrics["tactile_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
-            metrics["tactile_aux_weight"] = f32(self.config.tactile_aux_weight)
-            metrics["tactile_aux_horizon"] = f32(horizon)
+            if self.tactile_aux_head is not None:
+                pred_dist = self.tactile_aux_head(feats_t)
+                aux = -pred_dist.log_prob(target)
+                aux = aux * valid
+                losses["tactile_aux"] = aux
+                metrics["tactile_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
+                metrics["tactile_aux_weight"] = f32(
+                    getattr(self.config, "tactile_aux_weight", 0.0)
+                )
+                metrics["tactile_aux_horizon"] = f32(horizon)
 
-        if self.contact_aux_head is not None:
-            label_keys = [key for key in CONTACT_AUX_KEYS if key in data]
+            if self.tactile_group_aux_head is not None:
+                groups = int(getattr(self.config, "tactile_aux_groups", 8))
+                flat_target = target.reshape((*target.shape[:3], -1))
+                pad = (-flat_target.shape[-1]) % groups
+                if pad:
+                    flat_target = jnp.pad(
+                        flat_target, [(0, 0), (0, 0), (0, 0), (0, pad)]
+                    )
+                grouped = flat_target.reshape((*flat_target.shape[:-1], groups, -1))
+                grouped = jnp.mean(jnp.abs(grouped), axis=-1)
+                pred_group = self.tactile_group_aux_head(feats_t)
+                group_aux = -pred_group.log_prob(grouped)
+                group_aux = group_aux * valid
+                losses["tactile_group_aux"] = group_aux
+                metrics["tactile_group_aux_loss"] = group_aux.sum() / jnp.maximum(
+                    valid.sum(), 1.0
+                )
+                metrics["tactile_group_aux_groups"] = f32(groups)
+
+        if self.contact_aux_heads:
+            label_keys = [key for key in self.contact_aux_keys if key in data]
             if not label_keys:
                 raise ValueError(
                     "contact_aux_weight > 0 requires log_contact_* labels in data."
                 )
             mode = str(getattr(self.config, "contact_aux_mode", "future"))
             horizon = int(getattr(self.config, "contact_aux_horizon", 1))
-            if mode not in ("future", "current"):
+            if mode not in ("future", "current", "onset", "change"):
                 raise NotImplementedError(f"Unknown contact_aux_mode: {mode}")
             if mode == "current":
                 horizon = 1
+            missing = [key for key in self.contact_aux_keys if key not in data]
+            if missing:
+                raise ValueError(
+                    "contact_aux labels missing from data: "
+                    f"{missing}. Disable contact_aux_rich_labels or update env logs."
+                )
             label_values = []
-            for key in CONTACT_AUX_KEYS:
+            for key in self.contact_aux_keys:
                 value = data[key].astype(f32)
                 if value.shape[-1:] == (1,):
                     value = value[..., 0]
                 label_values.append(value)
             labels = jnp.stack(label_values, -1)
             source_len = labels.shape[1]
-            if mode == "future":
+            if mode != "current":
                 source_len -= horizon
             if source_len <= 0:
                 raise ValueError(
@@ -347,24 +442,36 @@ class WorldModel(nj.Module):
             stoch = stoch.reshape((*stoch.shape[:2], -1))
             parts = [feats["deter"][:, :source_len], stoch]
             use_action = bool(getattr(self.config, "contact_aux_action", True))
-            actions = {key: data[key][:, :source_len] for key in self.act_space if key in data}
+            actions = {
+                key: data[key][:, :source_len]
+                for key in self.act_space
+                if key in data
+            }
             if use_action and actions:
                 act = jaxutils.concat_dict(actions).astype(f32)
                 act = act.reshape((*act.shape[:2], -1))
                 parts.append(act)
             feats_t = jnp.concatenate([x.astype(f32) for x in parts], -1)
 
-            if mode == "future":
-                target = jnp.stack(
+            if mode != "current":
+                future = jnp.stack(
                     [
                         labels[:, offset : offset + source_len]
                         for offset in range(1, horizon + 1)
                     ],
                     axis=2,
                 )
+                current = labels[:, :source_len, None]
+                if mode == "future":
+                    target = future
+                elif mode == "onset":
+                    target = jnp.maximum(future - current, 0.0)
+                elif mode == "change":
+                    target = jnp.abs(future - current)
                 valid = jnp.stack(
                     [
-                        1.0 - data["is_first"][:, offset : offset + source_len].astype(f32)
+                        1.0
+                        - data["is_first"][:, offset : offset + source_len].astype(f32)
                         for offset in range(1, horizon + 1)
                     ],
                     axis=2,
@@ -374,20 +481,108 @@ class WorldModel(nj.Module):
                 target = labels[:, :source_len, None]
                 valid = 1.0 - data["is_first"][:, :source_len].astype(f32)
 
-            pred_dist = self.contact_aux_head(feats_t)
-            aux = -pred_dist.log_prob(target)
-            aux = aux * valid
+            pred_dists = [head(feats_t) for head in self.contact_aux_heads]
+            valid_elem = valid[..., None]
+            target = target.astype(f32)
+            elem_losses = []
+            for pred_dist in pred_dists:
+                base_dist = getattr(pred_dist, "distribution", pred_dist)
+                elem_loss = -base_dist.log_prob(target)
+                elem_losses.append(elem_loss)
+            elem_loss = jnp.stack(elem_losses, 0).mean(0)
+
+            if bool(getattr(self.config, "contact_aux_balanced", False)):
+                pos = (target * valid_elem).sum(axis=(0, 1, 2), keepdims=True)
+                total = valid_elem.sum(axis=(0, 1, 2), keepdims=True)
+                neg = jnp.maximum(total - pos, 0.0)
+                eps = 1e-4
+                clip = float(getattr(self.config, "contact_aux_pos_weight_clip", 20.0))
+                pos_w = jnp.minimum(0.5 * total / jnp.maximum(pos, eps), clip)
+                neg_w = jnp.minimum(0.5 * total / jnp.maximum(neg, eps), clip)
+                weights = target * pos_w + (1.0 - target) * neg_w
+                elem_loss = elem_loss * weights
+
+            aux = (elem_loss * valid_elem).sum(axis=(-1, -2))
             losses["contact_aux"] = aux
-            pred = pred_dist.mean() >= 0.5
+            pred_means = jnp.stack([dist.mean() for dist in pred_dists], 0)
+            pred_mean = pred_means.mean(0)
+            if len(pred_dists) > 1:
+                metrics["contact_aux_disagreement"] = pred_means.var(0).mean()
+            pred = pred_mean >= 0.5
             truth = target >= 0.5
             correct = (pred == truth).astype(f32)
             metrics["contact_aux_loss"] = aux.sum() / jnp.maximum(valid.sum(), 1.0)
             metrics["contact_aux_accuracy"] = (
-                correct * valid[..., None, None]
-            ).sum() / jnp.maximum(valid.sum() * target.shape[-1] * target.shape[-2], 1.0)
+                correct * valid[..., None]
+            ).sum() / jnp.maximum(valid.sum() * target.shape[-1], 1.0)
             metrics["contact_aux_positive_rate"] = target.mean()
             metrics["contact_aux_weight"] = f32(self.config.contact_aux_weight)
             metrics["contact_aux_horizon"] = f32(horizon)
+            metrics["contact_aux_rich_labels"] = f32(
+                bool(getattr(self.config, "contact_aux_rich_labels", False))
+            )
+            metrics["contact_aux_ensemble"] = f32(len(pred_dists))
+
+            for idx, key in enumerate(self.contact_aux_keys):
+                name = key.replace("log_contact_", "")
+                label_valid = valid
+                p = pred[..., idx]
+                y = truth[..., idx]
+                tp = (p & y).astype(f32) * label_valid
+                fp = (p & (~y)).astype(f32) * label_valid
+                fn = ((~p) & y).astype(f32) * label_valid
+                tn = ((~p) & (~y)).astype(f32) * label_valid
+                tp = tp.sum()
+                fp = fp.sum()
+                fn = fn.sum()
+                tn = tn.sum()
+                precision = tp / jnp.maximum(tp + fp, 1.0)
+                recall = tp / jnp.maximum(tp + fn, 1.0)
+                tnr = tn / jnp.maximum(tn + fp, 1.0)
+                metrics[f"contact_aux/{name}_precision"] = precision
+                metrics[f"contact_aux/{name}_recall"] = recall
+                metrics[f"contact_aux/{name}_f1"] = (
+                    2.0
+                    * precision
+                    * recall
+                    / jnp.maximum(precision + recall, 1e-6)
+                )
+                metrics[f"contact_aux/{name}_bal_acc"] = 0.5 * (recall + tnr)
+                metrics[f"contact_aux/{name}_pos_rate"] = (
+                    y.astype(f32) * label_valid
+                ).sum() / jnp.maximum(label_valid.sum(), 1.0)
+
+            imagine_weight = float(getattr(self.config, "contact_imagine_weight", 0.0))
+            if imagine_weight > 0 and mode != "current" and horizon == 1:
+                one_step_target = target[:, :, :1]
+                flat_state = {
+                    key: value[:, :source_len].reshape((-1, *value.shape[2:]))
+                    for key, value in states.items()
+                }
+                flat_action = {
+                    key: data[key][:, :source_len].reshape((-1, *data[key].shape[2:]))
+                    for key in self.act_space
+                    if key in data
+                }
+                img_state = self.rssm.img_step(flat_state, flat_action)
+                img_stoch = img_state["stoch"].reshape((target.shape[0], source_len, -1))
+                img_deter = img_state["deter"].reshape((target.shape[0], source_len, -1))
+                img_parts = [img_deter, img_stoch]
+                if use_action and actions:
+                    img_parts.append(act)
+                img_feats_t = jnp.concatenate([x.astype(f32) for x in img_parts], -1)
+                img_dists = [head(img_feats_t) for head in self.contact_aux_heads]
+                img_losses = []
+                for pred_dist in img_dists:
+                    base_dist = getattr(pred_dist, "distribution", pred_dist)
+                    img_losses.append(-base_dist.log_prob(one_step_target))
+                img_loss = jnp.stack(img_losses, 0).mean(0)
+                img_aux = (img_loss * valid_elem[:, :, :1]).sum(axis=(-1, -2))
+                losses["contact_imagine_aux"] = img_aux
+                metrics["contact_imagine_aux_loss"] = img_aux.sum() / jnp.maximum(
+                    valid.sum(), 1.0
+                )
+                metrics["contact_imagine_weight"] = f32(imagine_weight)
 
         for key, dist in dists.items():
             if hasattr(dist, "entropy"):
@@ -475,14 +670,7 @@ class WorldModel(nj.Module):
         return report
 
     def _contact_probe_report(self, data, raw_data):
-        label_keys = [
-            "log_contact_any",
-            "log_contact_hand",
-            "log_contact_foot",
-            "log_contact_torso",
-            "log_contact_object",
-            "log_contact_robot_object",
-        ]
+        label_keys = list(CONTACT_AUX_KEYS)
         label_keys = [key for key in label_keys if key in raw_data]
         if not label_keys:
             return {}

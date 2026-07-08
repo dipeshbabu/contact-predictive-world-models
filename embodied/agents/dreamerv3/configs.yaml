@@ -118,14 +118,23 @@ defaults:
   actent: 3e-4
   talk_prior: False
   tactile_aux_weight: 0.0
-  tactile_aux_mode: future
+  tactile_aux_mode: future  # future|current|masked
   tactile_aux_horizon: 1
   tactile_aux_action: True
+  tactile_mask_prob: 0.25
+  tactile_aux_groups: 8
   tactile_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
+  tactile_group_aux_weight: 0.0
+  tactile_group_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
   contact_aux_weight: 0.0
-  contact_aux_mode: future
+  contact_aux_mode: future  # future|current|onset|change
   contact_aux_horizon: 1
   contact_aux_action: True
+  contact_aux_balanced: False
+  contact_aux_pos_weight_clip: 20.0
+  contact_aux_rich_labels: False
+  contact_aux_ensemble: 1
+  contact_imagine_weight: 0.0
   contact_aux_head: {layers: 2, units: 256, dist: binary, act: silu, norm: layer}
 
   # Exploration

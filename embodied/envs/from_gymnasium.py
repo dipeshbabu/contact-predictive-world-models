@@ -59,10 +59,18 @@ class FromGymnasium(embodied.Env):
             "log_contact_any": embodied.Space(np.float32),
             "log_contact_count": embodied.Space(np.float32),
             "log_contact_hand": embodied.Space(np.float32),
+            "log_contact_left_hand": embodied.Space(np.float32),
+            "log_contact_right_hand": embodied.Space(np.float32),
             "log_contact_foot": embodied.Space(np.float32),
+            "log_contact_left_foot": embodied.Space(np.float32),
+            "log_contact_right_foot": embodied.Space(np.float32),
             "log_contact_torso": embodied.Space(np.float32),
             "log_contact_object": embodied.Space(np.float32),
             "log_contact_robot_object": embodied.Space(np.float32),
+            "log_contact_hand_object": embodied.Space(np.float32),
+            "log_contact_foot_floor": embodied.Space(np.float32),
+            "log_contact_robot_floor": embodied.Space(np.float32),
+            "log_contact_object_table": embodied.Space(np.float32),
             "log_contact_label_override_used": embodied.Space(np.float32),
             "log_contact_label_unknown_count": embodied.Space(np.float32),
         }
@@ -132,11 +140,35 @@ class FromGymnasium(embodied.Env):
             log_contact_any=np.float32(contact_info.get("contact_any", 0.0)),
             log_contact_count=np.float32(contact_info.get("contact_count", 0.0)),
             log_contact_hand=np.float32(contact_info.get("contact_hand", 0.0)),
+            log_contact_left_hand=np.float32(
+                contact_info.get("contact_left_hand", 0.0)
+            ),
+            log_contact_right_hand=np.float32(
+                contact_info.get("contact_right_hand", 0.0)
+            ),
             log_contact_foot=np.float32(contact_info.get("contact_foot", 0.0)),
+            log_contact_left_foot=np.float32(
+                contact_info.get("contact_left_foot", 0.0)
+            ),
+            log_contact_right_foot=np.float32(
+                contact_info.get("contact_right_foot", 0.0)
+            ),
             log_contact_torso=np.float32(contact_info.get("contact_torso", 0.0)),
             log_contact_object=np.float32(contact_info.get("contact_object", 0.0)),
             log_contact_robot_object=np.float32(
                 contact_info.get("contact_robot_object", 0.0)
+            ),
+            log_contact_hand_object=np.float32(
+                contact_info.get("contact_hand_object", 0.0)
+            ),
+            log_contact_foot_floor=np.float32(
+                contact_info.get("contact_foot_floor", 0.0)
+            ),
+            log_contact_robot_floor=np.float32(
+                contact_info.get("contact_robot_floor", 0.0)
+            ),
+            log_contact_object_table=np.float32(
+                contact_info.get("contact_object_table", 0.0)
             ),
             log_contact_label_override_used=np.float32(
                 contact_info.get("contact_label_override_used", 0.0)

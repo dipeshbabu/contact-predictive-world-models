@@ -52,6 +52,7 @@ Dreamer evaluation rollouts also log held-out `report_eval/contact_probe/*` metr
  setup/
     setup_env.sh
  run_all.sh
+ run_frontier.sh
  run_debug.sh
  pyproject.toml
  requirements.txt
@@ -142,6 +143,35 @@ Default pilot variants:
 - `noact`: future tactile prediction without action conditioning
 - `contact`: one-step semantic future contact prediction
 - `both`: future tactile plus future contact prediction
+- `contact_onset`: one-step new-contact prediction
+- `both_onset`: future tactile plus new-contact prediction
+
+## Frontier Run
+
+`run_frontier.sh` is the focused high-capability matrix. It keeps the regular
+pipeline but adds masked tactile modeling, grouped tactile summaries, richer
+semantic contact labels, class-balanced contact losses, contact-head ensembles,
+and imagined-prior contact consistency:
+
+```bash
+bash run_frontier.sh
+```
+
+Default frontier variants:
+- `base`: tactile Dreamer baseline
+- `aux`: future tactile prediction
+- `contact`: future semantic contact prediction
+- `both`: tactile plus semantic contact prediction
+- `masked`: masked tactile reconstruction from latent state
+- `tactile_group`: grouped tactile activity prediction
+- `contact_frontier`: rich class-balanced contact-onset ensemble plus imagined consistency
+- `frontier`: masked tactile plus grouped tactile plus rich contact frontier objective
+
+Optional RGB frontier run:
+
+```bash
+DREAMER_VARIANTS="frontier_rgb" bash run_frontier.sh
+```
 
 Useful debug overrides:
 
@@ -227,10 +257,19 @@ Default full-run coverage:
   - `recon` or `current`: current tactile reconstruction ablation
   - `future3`: three-step future tactile prediction
   - `future5`: five-step future tactile prediction
+  - `masked`: masked tactile reconstruction from world-model latent state
+  - `tactile_group`: future tactile plus grouped tactile activity prediction
   - `noact` or `future1_noact`: one-step future tactile prediction without action conditioning
   - `contact` or `contact1`: one-step future contact-label prediction
   - `contact3`: three-step future contact-label prediction
+  - `contact_onset` or `onset`: one-step new-contact prediction
+  - `contact_change` or `change`: one-step contact-state-change prediction
+  - `contact_frontier`: rich, balanced, ensemble contact-onset prediction with imagined consistency
   - `both` or `aux_contact`: combined tactile and contact prediction
+  - `both_onset` or `aux_contact_onset`: combined tactile and new-contact prediction
+  - `both_change` or `aux_contact_change`: combined tactile and contact-change prediction
+  - `frontier`: masked tactile, grouped tactile, rich contact onset, class balancing, ensemble disagreement, and imagined consistency
+  - `frontier_rgb`: `frontier` with tactile and RGB observations
 
 ## Calibration
 
@@ -332,6 +371,54 @@ python cpwm/train_dreamer.py \
   --tactile_aux_weight 0.1 \
   --contact_aux_weight 0.1 \
   --logdir outputs/runs/h1touch-door-v0_both_s0
+```
+
+Train contact-onset auxiliary:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --contact_aux_weight 0.1 \
+  --contact_aux_mode onset \
+  --contact_aux_horizon 1 \
+  --logdir outputs/runs/h1touch-door-v0_contact_onset_s0
+```
+
+Train masked tactile auxiliary:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --tactile_aux_mode masked \
+  --tactile_mask_prob 0.25 \
+  --logdir outputs/runs/h1touch-door-v0_masked_s0
+```
+
+Train the full frontier objective:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --tactile_aux_mode masked \
+  --tactile_group_aux_weight 0.05 \
+  --contact_aux_weight 0.1 \
+  --contact_aux_mode onset \
+  --contact_aux_balanced \
+  --contact_aux_rich_labels \
+  --contact_aux_ensemble 4 \
+  --contact_imagine_weight 0.05 \
+  --logdir outputs/runs/h1touch-door-v0_frontier_s0
 ```
 
 Train ablation variants:

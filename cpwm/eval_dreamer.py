@@ -26,6 +26,17 @@ KNOWN_VARIANTS = (
     "future1",
     "future3",
     "future5",
+    "masked",
+    "tactile_group",
+    "contact_frontier",
+    "frontier",
+    "frontier_rgb",
+    "contact_onset",
+    "contact_change",
+    "both_onset",
+    "both_change",
+    "aux_contact_onset",
+    "aux_contact_change",
     "contact1",
     "contact3",
     "current",
@@ -211,7 +222,12 @@ def main() -> None:
     humanoid_cfg = run_config.get("env", {}).get("humanoid", {})
     obs_key = str(humanoid_cfg.get("obs_key", "dict"))
     obs_wrapper = str(humanoid_cfg.get("obs_wrapper", True))
-    default_sensors = "" if variant in ("proprio", "proprio_only") else "tactile"
+    if variant in ("proprio", "proprio_only"):
+        default_sensors = ""
+    elif variant == "frontier_rgb":
+        default_sensors = "tactile,image"
+    else:
+        default_sensors = "tactile"
     sensors = str(humanoid_cfg.get("sensors", default_sensors))
     tactile_flat = str(humanoid_cfg.get("tactile_flat", True))
     tactile_concat = str(humanoid_cfg.get("tactile_concat", True))
@@ -289,6 +305,14 @@ def main() -> None:
         "--run.from_checkpoint", str(ckpt),
     ] + success_contact_args
 
+    if "image" in {part.strip() for part in sensors.split(",") if part.strip()}:
+        cmd += [
+            "--encoder.cnn_keys", "image",
+            "--encoder.mlp_keys", "^(?!image$).*",
+            "--decoder.cnn_keys", "image",
+            "--decoder.mlp_keys", "^(?!image$).*",
+        ]
+
     default_tactile_aux = (
         0.1
         if variant
@@ -299,40 +323,100 @@ def main() -> None:
             "current",
             "future3",
             "future5",
+            "masked",
+            "tactile_group",
+            "frontier",
+            "frontier_rgb",
             "noact",
             "future1_noact",
             "both",
             "aux_contact",
+            "both_onset",
+            "both_change",
+            "aux_contact_onset",
+            "aux_contact_change",
         )
         else 0.0
     )
     tactile_aux_weight = float(run_config.get("tactile_aux_weight", default_tactile_aux))
-    if tactile_aux_weight > 0:
-        default_tactile_mode = "current" if variant in ("recon", "current") else "future"
+    tactile_group_aux_weight = float(
+        run_config.get(
+            "tactile_group_aux_weight",
+            0.05 if variant in ("tactile_group", "frontier", "frontier_rgb") else 0.0,
+        )
+    )
+    if tactile_aux_weight > 0 or tactile_group_aux_weight > 0:
+        default_tactile_mode = (
+            "current"
+            if variant in ("recon", "current")
+            else "masked"
+            if variant in ("masked", "frontier", "frontier_rgb")
+            else "future"
+        )
         default_tactile_horizon = 3 if variant == "future3" else 5 if variant == "future5" else 1
         default_tactile_action = variant not in ("noact", "future1_noact")
         cmd += [
-            "--tactile_aux_weight", str(tactile_aux_weight),
             "--tactile_aux_mode",
             str(run_config.get("tactile_aux_mode", default_tactile_mode)),
             "--tactile_aux_horizon",
             str(run_config.get("tactile_aux_horizon", default_tactile_horizon)),
             "--tactile_aux_action",
             str(run_config.get("tactile_aux_action", default_tactile_action)),
+            "--tactile_mask_prob", str(run_config.get("tactile_mask_prob", 0.25)),
+            "--tactile_aux_groups", str(run_config.get("tactile_aux_groups", 8)),
+        ]
+    if tactile_aux_weight > 0:
+        cmd += ["--tactile_aux_weight", str(tactile_aux_weight)]
+    if tactile_group_aux_weight > 0:
+        cmd += [
+            "--tactile_group_aux_weight", str(tactile_group_aux_weight),
+            "--tactile_aux_groups", str(run_config.get("tactile_aux_groups", 8)),
         ]
     default_contact_aux = (
         0.1
-        if variant in ("contact", "contact1", "contact3", "both", "aux_contact")
+        if variant
+        in (
+            "contact",
+            "contact1",
+            "contact3",
+            "contact_frontier",
+            "contact_onset",
+            "contact_change",
+            "frontier",
+            "frontier_rgb",
+            "both",
+            "aux_contact",
+            "both_onset",
+            "both_change",
+            "aux_contact_onset",
+            "aux_contact_change",
+        )
         else 0.0
     )
     contact_aux_weight = float(run_config.get("contact_aux_weight", default_contact_aux))
     if contact_aux_weight > 0:
+        default_contact_mode = "future"
+        if variant in ("contact_onset", "both_onset", "aux_contact_onset"):
+            default_contact_mode = "onset"
+        elif variant in ("contact_frontier", "frontier", "frontier_rgb"):
+            default_contact_mode = "onset"
+        elif variant in ("contact_change", "both_change", "aux_contact_change"):
+            default_contact_mode = "change"
         cmd += [
             "--contact_aux_weight", str(contact_aux_weight),
-            "--contact_aux_mode", str(run_config.get("contact_aux_mode", "future")),
+            "--contact_aux_mode",
+            str(run_config.get("contact_aux_mode", default_contact_mode)),
             "--contact_aux_horizon",
             str(run_config.get("contact_aux_horizon", 3 if variant == "contact3" else 1)),
             "--contact_aux_action", str(run_config.get("contact_aux_action", True)),
+            "--contact_aux_balanced",
+            str(run_config.get("contact_aux_balanced", variant in ("contact_frontier", "frontier", "frontier_rgb"))),
+            "--contact_aux_rich_labels",
+            str(run_config.get("contact_aux_rich_labels", variant in ("contact_frontier", "frontier", "frontier_rgb"))),
+            "--contact_aux_ensemble",
+            str(run_config.get("contact_aux_ensemble", 4 if variant in ("contact_frontier", "frontier", "frontier_rgb") else 1)),
+            "--contact_imagine_weight",
+            str(run_config.get("contact_imagine_weight", 0.05 if variant in ("contact_frontier", "frontier", "frontier_rgb") else 0.0)),
         ]
 
     print("[EVAL CMD]", " ".join(cmd))

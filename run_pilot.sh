@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 # produce a real signal before launching the expensive full sweep.
 DREAMER_TASKS=${DREAMER_TASKS:-"h1touch-walk-v0 h1touch-push-v0 h1touch-door-v0"}
 PPO_TASKS=${PPO_TASKS:-"$DREAMER_TASKS"}
-DREAMER_VARIANTS=${DREAMER_VARIANTS:-"proprio base aux recon noact contact both"}
+DREAMER_VARIANTS=${DREAMER_VARIANTS:-"proprio base aux recon noact contact both contact_onset both_onset"}
 SEEDS=${SEEDS:-"0 1 2"}
 NOISES=${NOISES:-"0.0 0.02"}
 DROPS=${DROPS:-"0.0 0.2"}

@@ -199,10 +199,18 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             "contact_any": float(count > 0),
             "contact_count": float(count),
             "contact_hand": 0.0,
+            "contact_left_hand": 0.0,
+            "contact_right_hand": 0.0,
             "contact_foot": 0.0,
+            "contact_left_foot": 0.0,
+            "contact_right_foot": 0.0,
             "contact_torso": 0.0,
             "contact_object": 0.0,
             "contact_robot_object": 0.0,
+            "contact_hand_object": 0.0,
+            "contact_foot_floor": 0.0,
+            "contact_robot_floor": 0.0,
+            "contact_object_table": 0.0,
             "contact_label_override_used": 0.0,
             "contact_label_unknown_count": 0.0,
         }
@@ -214,14 +222,26 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
             pair_labels = self._contact_label_overrides.get(pair_key)
             if pair_labels is not None:
                 labels["contact_label_override_used"] = 1.0
+                pair_labels = {
+                    **self._contact_rule_labels(geom_names, body_names),
+                    **pair_labels,
+                }
             else:
                 pair_labels = self._contact_rule_labels(geom_names, body_names)
             for key in (
                 "contact_hand",
+                "contact_left_hand",
+                "contact_right_hand",
                 "contact_foot",
+                "contact_left_foot",
+                "contact_right_foot",
                 "contact_torso",
                 "contact_object",
                 "contact_robot_object",
+                "contact_hand_object",
+                "contact_foot_floor",
+                "contact_robot_floor",
+                "contact_object_table",
             ):
                 labels[key] = max(labels[key], float(pair_labels.get(key, 0.0)))
             labels["contact_label_unknown_count"] += float(
@@ -245,16 +265,24 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
                 )
             for row in reader:
                 key = self._contact_pair_key((row.get("geom1", ""), row.get("geom2", "")))
-                overrides[key] = {
-                    name: float(row.get(name, 0.0) or 0.0)
-                    for name in (
-                        "contact_hand",
-                        "contact_foot",
-                        "contact_torso",
-                        "contact_object",
-                        "contact_robot_object",
-                    )
-                }
+                overrides[key] = {}
+                for name in (
+                    "contact_hand",
+                    "contact_left_hand",
+                    "contact_right_hand",
+                    "contact_foot",
+                    "contact_left_foot",
+                    "contact_right_foot",
+                    "contact_torso",
+                    "contact_object",
+                    "contact_robot_object",
+                    "contact_hand_object",
+                    "contact_foot_floor",
+                    "contact_robot_floor",
+                    "contact_object_table",
+                ):
+                    if name in row and row.get(name, "") != "":
+                        overrides[key][name] = float(row.get(name, 0.0) or 0.0)
         return overrides
 
     def _contact_pair_names(self, contact):
@@ -310,19 +338,35 @@ class HumanoidEnv(MujocoEnv, gym.utils.EzPickle):
         )
         foot_tokens = ("foot", "ankle")
         torso_tokens = ("torso", "pelvis", "waist", "hip")
+        left_tokens = ("left", "lh_")
+        right_tokens = ("right", "rh_")
+        floor_tokens = ("floor", "ground")
+        table_tokens = ("table",)
 
         hand = any_token(hand_tokens)
         foot = any_token(foot_tokens)
         torso = any_token(torso_tokens)
         obj = any_token(object_tokens)
+        floor = any_token(floor_tokens)
+        table = any_token(table_tokens)
+        left = any_token(left_tokens)
+        right = any_token(right_tokens)
         robot = hand or foot or torso
-        unknown = not (hand or foot or torso or obj)
+        unknown = not (hand or foot or torso or obj or floor)
         return {
             "contact_hand": float(hand),
+            "contact_left_hand": float(hand and left),
+            "contact_right_hand": float(hand and right),
             "contact_foot": float(foot),
+            "contact_left_foot": float(foot and left),
+            "contact_right_foot": float(foot and right),
             "contact_torso": float(torso),
             "contact_object": float(obj),
             "contact_robot_object": float(obj and robot),
+            "contact_hand_object": float(hand and obj),
+            "contact_foot_floor": float(foot and floor),
+            "contact_robot_floor": float(robot and floor),
+            "contact_object_table": float(obj and table),
             "contact_unknown": float(unknown),
         }
 

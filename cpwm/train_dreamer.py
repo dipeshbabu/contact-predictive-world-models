@@ -19,11 +19,17 @@ def main() -> None:
     ap.add_argument("--tactile_aux_weight", type=float, default=0.0)
     ap.add_argument(
         "--tactile_aux_mode",
-        choices=("future", "current"),
+        choices=("future", "current", "masked"),
         default="future",
-        help="future predicts tau_{t+1:t+H}; current is tactile reconstruction ablation",
+        help=(
+            "future predicts tau_{t+1:t+H}; current reconstructs tactile; "
+            "masked reconstructs tactile from masked tactile observations"
+        ),
     )
     ap.add_argument("--tactile_aux_horizon", type=int, default=1)
+    ap.add_argument("--tactile_mask_prob", type=float, default=0.25)
+    ap.add_argument("--tactile_aux_groups", type=int, default=8)
+    ap.add_argument("--tactile_group_aux_weight", type=float, default=0.0)
     ap.add_argument(
         "--no_tactile_aux_action",
         action="store_true",
@@ -32,9 +38,12 @@ def main() -> None:
     ap.add_argument("--contact_aux_weight", type=float, default=0.0)
     ap.add_argument(
         "--contact_aux_mode",
-        choices=("future", "current"),
+        choices=("future", "current", "onset", "change"),
         default="future",
-        help="future predicts future contact labels; current is contact reconstruction",
+        help=(
+            "future predicts future contact labels; current reconstructs labels; "
+            "onset predicts new contacts; change predicts contact state changes"
+        ),
     )
     ap.add_argument("--contact_aux_horizon", type=int, default=1)
     ap.add_argument(
@@ -42,6 +51,10 @@ def main() -> None:
         action="store_true",
         help="Disable action conditioning in the contact auxiliary head",
     )
+    ap.add_argument("--contact_aux_balanced", action="store_true")
+    ap.add_argument("--contact_aux_rich_labels", action="store_true")
+    ap.add_argument("--contact_aux_ensemble", type=int, default=1)
+    ap.add_argument("--contact_imagine_weight", type=float, default=0.0)
     ap.add_argument("--logdir", required=True)
     ap.add_argument("--jax_platform", default="gpu")
     ap.add_argument(
@@ -106,12 +119,28 @@ def main() -> None:
         args.contact_label_overrides,
     ]
 
-    if args.tactile_aux_weight > 0:
+    if "image" in {part.strip() for part in sensors.split(",") if part.strip()}:
         cmd += [
-            "--tactile_aux_weight", str(args.tactile_aux_weight),
+            "--encoder.cnn_keys", "image",
+            "--encoder.mlp_keys", "^(?!image$).*",
+            "--decoder.cnn_keys", "image",
+            "--decoder.mlp_keys", "^(?!image$).*",
+        ]
+
+    if args.tactile_aux_weight > 0 or args.tactile_group_aux_weight > 0:
+        cmd += [
             "--tactile_aux_mode", args.tactile_aux_mode,
             "--tactile_aux_horizon", str(args.tactile_aux_horizon),
             "--tactile_aux_action", str(not args.no_tactile_aux_action),
+            "--tactile_mask_prob", str(args.tactile_mask_prob),
+            "--tactile_aux_groups", str(args.tactile_aux_groups),
+        ]
+    if args.tactile_aux_weight > 0:
+        cmd += ["--tactile_aux_weight", str(args.tactile_aux_weight)]
+    if args.tactile_group_aux_weight > 0:
+        cmd += [
+            "--tactile_group_aux_weight", str(args.tactile_group_aux_weight),
+            "--tactile_aux_groups", str(args.tactile_aux_groups),
         ]
     if args.contact_aux_weight > 0:
         cmd += [
@@ -119,6 +148,10 @@ def main() -> None:
             "--contact_aux_mode", args.contact_aux_mode,
             "--contact_aux_horizon", str(args.contact_aux_horizon),
             "--contact_aux_action", str(not args.no_contact_aux_action),
+            "--contact_aux_balanced", str(args.contact_aux_balanced),
+            "--contact_aux_rich_labels", str(args.contact_aux_rich_labels),
+            "--contact_aux_ensemble", str(args.contact_aux_ensemble),
+            "--contact_imagine_weight", str(args.contact_imagine_weight),
         ]
 
     print("[TRAIN CMD]", " ".join(cmd))

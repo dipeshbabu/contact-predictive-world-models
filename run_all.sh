@@ -22,6 +22,11 @@ JAX_PLATFORM=${JAX_PLATFORM:-gpu}
 AUX_ON=${AUX_ON:-0.1}
 AUX_OFF=${AUX_OFF:-0.0}
 CONTACT_AUX_ON=${CONTACT_AUX_ON:-0.1}
+TACTILE_GROUP_AUX_ON=${TACTILE_GROUP_AUX_ON:-0.05}
+TACTILE_MASK_PROB=${TACTILE_MASK_PROB:-0.25}
+TACTILE_AUX_GROUPS=${TACTILE_AUX_GROUPS:-8}
+CONTACT_IMAGINE_ON=${CONTACT_IMAGINE_ON:-0.05}
+CONTACT_AUX_ENSEMBLE=${CONTACT_AUX_ENSEMBLE:-4}
 CONTACT_LABEL_OVERRIDES=${CONTACT_LABEL_OVERRIDES:-}
 DOOR_SUCCESS_STAND_THRESHOLD=${DOOR_SUCCESS_STAND_THRESHOLD:-0.8}
 DOOR_SUCCESS_DOOR_THRESHOLD=${DOOR_SUCCESS_DOOR_THRESHOLD:-0.8}
@@ -112,6 +117,29 @@ train_dreamer_one () {
   if [[ "${contact_action}" != "1" ]]; then
     args+=(--no_contact_aux_action)
   fi
+  case "$variant" in
+    masked|frontier|frontier_rgb)
+      args+=(--tactile_mask_prob "${TACTILE_MASK_PROB}")
+      ;;
+  esac
+  case "$variant" in
+    tactile_group|frontier|frontier_rgb)
+      args+=(
+        --tactile_group_aux_weight "${TACTILE_GROUP_AUX_ON}"
+        --tactile_aux_groups "${TACTILE_AUX_GROUPS}"
+      )
+      ;;
+  esac
+  case "$variant" in
+    contact_frontier|frontier|frontier_rgb)
+      args+=(
+        --contact_aux_balanced
+        --contact_aux_rich_labels
+        --contact_aux_ensemble "${CONTACT_AUX_ENSEMBLE}"
+        --contact_imagine_weight "${CONTACT_IMAGINE_ON}"
+      )
+      ;;
+  esac
 
   if [[ "$DRY_RUN" != "1" && -f "${logdir}/checkpoint.ckpt" ]]; then
     echo "[SKIP TRAIN] ${logdir}"
@@ -147,6 +175,12 @@ dreamer_variant_config () {
     future5)
       echo "${AUX_ON} future 5 1 ${AUX_OFF} future 1 1 tactile"
       ;;
+    masked)
+      echo "${AUX_ON} masked 1 1 ${AUX_OFF} future 1 1 tactile"
+      ;;
+    tactile_group)
+      echo "${AUX_ON} future 1 1 ${AUX_OFF} future 1 1 tactile"
+      ;;
     noact|future1_noact)
       echo "${AUX_ON} future 1 0 ${AUX_OFF} future 1 1 tactile"
       ;;
@@ -156,8 +190,29 @@ dreamer_variant_config () {
     contact3)
       echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} future 3 1 tactile"
       ;;
+    contact_onset|onset)
+      echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    contact_change|change)
+      echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} change 1 1 tactile"
+      ;;
+    contact_frontier)
+      echo "${AUX_OFF} future 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
     both|aux_contact)
       echo "${AUX_ON} future 1 1 ${CONTACT_AUX_ON} future 1 1 tactile"
+      ;;
+    both_onset|aux_contact_onset)
+      echo "${AUX_ON} future 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    both_change|aux_contact_change)
+      echo "${AUX_ON} future 1 1 ${CONTACT_AUX_ON} change 1 1 tactile"
+      ;;
+    frontier)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    frontier_rgb)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile,image"
       ;;
     *)
       echo "Unknown DREAMER variant: ${variant}" >&2
