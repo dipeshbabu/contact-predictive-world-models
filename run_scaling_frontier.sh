@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 TASKS=${TASKS:-"h1touch-push-v0 h1touch-door-v0 h1touch-cabinet-v0 h1touch-insert_small-v0"}
-VARIANTS=${VARIANTS:-"base frontier frontier_bct frontier_rgb_bct"}
+VARIANTS=${VARIANTS:-"base frontier frontier_bct_native frontier_bct_spatial frontier_rgb_bct_spatial"}
 SEEDS=${SEEDS:-"0 1 2"}
 BUDGETS=${BUDGETS:-"250000 500000 1000000 2000000"}
 MODEL_CONFIGS=${MODEL_CONFIGS:-"humanoid_benchmark humanoid_benchmark,large"}

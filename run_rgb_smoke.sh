@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 DREAMER_TASKS=${DREAMER_TASKS:-"h1touch-door-v0"}
-DREAMER_VARIANTS=${DREAMER_VARIANTS:-"frontier_rgb_bct"}
+DREAMER_VARIANTS=${DREAMER_VARIANTS:-"frontier_rgb_bct_spatial"}
 SEEDS=${SEEDS:-"0"}
 TRAIN_STEPS=${TRAIN_STEPS:-5000}
 EVAL_STEPS=${EVAL_STEPS:-500}

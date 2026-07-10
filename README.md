@@ -55,10 +55,12 @@ Dreamer evaluation rollouts also log held-out `report_eval/contact_probe/*` metr
  run_all.sh
  run_frontier.sh
  run_pretrain_frontier.sh
+ run_foundation_pretrain.sh
  run_scaling_frontier.sh
  run_transfer_eval.sh
  run_rgb_smoke.sh
  run_strong_baselines.sh
+ run_external_baseline.sh
  run_debug.sh
  pyproject.toml
  requirements.txt
@@ -173,7 +175,11 @@ Default frontier variants:
 - `part_tokens`: Body Contact Token tactile activity prediction
 - `contact_frontier`: rich class-balanced contact-onset ensemble plus imagined consistency
 - `frontier`: masked tactile plus grouped tactile plus rich contact frontier objective
-- `frontier_bct`: `frontier` plus Body Contact Token prediction
+- `frontier_bct_flat`: `frontier` plus BCT targets from deterministic flat tactile chunks
+- `frontier_bct_native`: `frontier` plus native named-sensor body contact tokens
+- `frontier_bct_spatial`: `frontier_bct_native` plus spatial body-part tactile map prediction
+- `frontier_bct_no_contact`: native BCT without semantic contact-label auxiliary loss
+- `frontier_bct`: strongest native BCT token variant
 
 Optional RGB frontier run:
 
@@ -185,17 +191,21 @@ Frontier support scripts:
 
 ```bash
 bash run_pretrain_frontier.sh
+bash run_foundation_pretrain.sh
 bash run_scaling_frontier.sh
 bash run_transfer_eval.sh
 bash run_rgb_smoke.sh
 bash run_strong_baselines.sh
+bash run_external_baseline.sh
 ```
 
 - `run_pretrain_frontier.sh` disables actor-critic updates and trains the multimodal world model stage only.
+- `run_foundation_pretrain.sh` runs the world-model-only stage across all default locomotion and manipulation tasks with larger Dreamer configs.
 - `run_scaling_frontier.sh` sweeps training budgets and Dreamer model sizes.
 - `run_transfer_eval.sh` evaluates trained checkpoints under heavier sensory and dynamics shifts without retraining.
-- `run_rgb_smoke.sh` is a bounded RGB command-path check for `frontier_rgb_bct`.
+- `run_rgb_smoke.sh` is a bounded RGB command-path check for `frontier_rgb_bct_spatial`.
 - `run_strong_baselines.sh` runs larger Dreamer baselines plus PPO references.
+- `run_external_baseline.sh` adapts an external baseline command template into the same task/seed/logdir layout.
 
 To fine-tune from a pretrained world-model checkpoint, pass it through the common launcher:
 
@@ -292,7 +302,7 @@ Default full-run coverage:
   - `future5`: five-step future tactile prediction
   - `masked`: masked tactile reconstruction from world-model latent state
   - `tactile_group`: future tactile plus grouped tactile activity prediction
-  - `part_tokens`: Body Contact Token prediction over deterministic body-part tactile tokens
+  - `part_tokens`: Body Contact Token prediction over deterministic flat tactile chunks
   - `noact` or `future1_noact`: one-step future tactile prediction without action conditioning
   - `contact` or `contact1`: one-step future contact-label prediction
   - `contact3`: three-step future contact-label prediction
@@ -304,8 +314,13 @@ Default full-run coverage:
   - `both_change` or `aux_contact_change`: combined tactile and contact-change prediction
   - `frontier`: masked tactile, grouped tactile, rich contact onset, class balancing, ensemble disagreement, and imagined consistency
   - `frontier_rgb`: `frontier` with tactile and RGB observations
-  - `frontier_bct`: `frontier` with Body Contact Token prediction
+  - `frontier_bct_flat`: `frontier` with flat BCT targets
+  - `frontier_bct_native`: `frontier` with named-sensor native BCT targets
+  - `frontier_bct_spatial`: native BCT plus spatial body-part tactile map prediction
+  - `frontier_bct_no_contact`: native BCT without semantic contact auxiliary labels
+  - `frontier_bct`: strongest native BCT token variant
   - `frontier_rgb_bct`: `frontier_bct` with tactile and RGB observations
+  - `frontier_rgb_bct_spatial`: spatial BCT with tactile and RGB observations
 
 ## Calibration
 
@@ -469,7 +484,9 @@ python cpwm/train_dreamer.py \
   --tactile_aux_mode masked \
   --tactile_group_aux_weight 0.05 \
   --tactile_part_aux_weight 0.05 \
+  --tactile_part_aux_source native \
   --tactile_part_aux_parts 8 \
+  --tactile_part_map_aux_weight 0.03 \
   --contact_aux_weight 0.1 \
   --contact_aux_mode onset \
   --contact_aux_balanced \

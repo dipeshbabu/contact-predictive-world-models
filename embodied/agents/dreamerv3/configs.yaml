@@ -76,7 +76,7 @@ defaults:
     minecraft: {size: [64, 64], break_speed: 100.0, logs: False}
     dmc: {size: [64, 64], repeat: 2, camera: -1}
     loconav: {size: [64, 64], repeat: 2, camera: -1}
-    humanoid: {obs_key: vector, obs_wrapper: false, policy_path: "", mean_path: "", var_path: "", policy_type: "", small_obs: "", is_eval: False, actuation: position, sensors: "", tactile_flat: false, tactile_concat: false, proprio_noise: 0.0, tactile_dropout: 0.0, mass_scale: 1.0, friction_scale: 1.0, door_success_stand_threshold: 0.8, door_success_door_threshold: 0.8, door_success_hatch_threshold: 0.8, door_success_passage_threshold: 0.8, insert_success_stand_threshold: 0.8, insert_success_cube_threshold: 0.9, insert_success_peg_height_threshold: 0.9, contact_label_overrides: "", reward_dict: {hand_dist: 0.1, target_dist: 0.1, success: 10, terminate: False}}
+    humanoid: {obs_key: vector, obs_wrapper: false, policy_path: "", mean_path: "", var_path: "", policy_type: "", small_obs: "", is_eval: False, actuation: position, sensors: "", tactile_flat: false, tactile_concat: false, tactile_part_tokens: false, tactile_part_maps: false, tactile_part_threshold: 1e-4, proprio_noise: 0.0, tactile_dropout: 0.0, mass_scale: 1.0, friction_scale: 1.0, door_success_stand_threshold: 0.8, door_success_door_threshold: 0.8, door_success_hatch_threshold: 0.8, door_success_passage_threshold: 0.8, insert_success_stand_threshold: 0.8, insert_success_cube_threshold: 0.9, insert_success_peg_height_threshold: 0.9, contact_label_overrides: "", reward_dict: {hand_dist: 0.1, target_dist: 0.1, success: 10, terminate: False}}
 
   # Agent
   task_behavior: Greedy
@@ -131,7 +131,10 @@ defaults:
   tactile_part_aux_weight: 0.0
   tactile_part_aux_parts: 8
   tactile_part_aux_threshold: 1e-4
+  tactile_part_aux_source: flat  # flat|native
   tactile_part_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
+  tactile_part_map_aux_weight: 0.0
+  tactile_part_map_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
   contact_aux_weight: 0.0
   contact_aux_mode: future  # future|current|onset|change
   contact_aux_horizon: 1

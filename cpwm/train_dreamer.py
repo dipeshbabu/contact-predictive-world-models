@@ -34,6 +34,13 @@ def main() -> None:
     ap.add_argument("--tactile_part_aux_parts", type=int, default=8)
     ap.add_argument("--tactile_part_aux_threshold", type=float, default=1e-4)
     ap.add_argument(
+        "--tactile_part_aux_source",
+        choices=("flat", "native"),
+        default="flat",
+        help="flat derives BCT targets from the concatenated vector; native uses env body-part tokens.",
+    )
+    ap.add_argument("--tactile_part_map_aux_weight", type=float, default=0.0)
+    ap.add_argument(
         "--no_tactile_aux_action",
         action="store_true",
         help="Disable action conditioning in the tactile auxiliary head",
@@ -110,6 +117,12 @@ def main() -> None:
         "--env.humanoid.sensors", sensors,
         "--env.humanoid.tactile_flat", "True",
         "--env.humanoid.tactile_concat", "True",
+        "--env.humanoid.tactile_part_tokens",
+        str(args.tactile_part_aux_weight > 0 and args.tactile_part_aux_source == "native"),
+        "--env.humanoid.tactile_part_maps",
+        str(args.tactile_part_map_aux_weight > 0),
+        "--env.humanoid.tactile_part_threshold",
+        str(args.tactile_part_aux_threshold),
         "--env.humanoid.door_success_stand_threshold",
         str(args.door_success_stand_threshold),
         "--env.humanoid.door_success_door_threshold",
@@ -140,6 +153,7 @@ def main() -> None:
         args.tactile_aux_weight > 0
         or args.tactile_group_aux_weight > 0
         or args.tactile_part_aux_weight > 0
+        or args.tactile_part_map_aux_weight > 0
     ):
         cmd += [
             "--tactile_aux_mode", args.tactile_aux_mode,
@@ -160,6 +174,11 @@ def main() -> None:
             "--tactile_part_aux_weight", str(args.tactile_part_aux_weight),
             "--tactile_part_aux_parts", str(args.tactile_part_aux_parts),
             "--tactile_part_aux_threshold", str(args.tactile_part_aux_threshold),
+            "--tactile_part_aux_source", args.tactile_part_aux_source,
+        ]
+    if args.tactile_part_map_aux_weight > 0:
+        cmd += [
+            "--tactile_part_map_aux_weight", str(args.tactile_part_map_aux_weight),
         ]
     if args.contact_aux_weight > 0:
         cmd += [

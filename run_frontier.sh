@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 # masked tactile modeling, grouped tactile summaries, and optional RGB.
 DREAMER_TASKS=${DREAMER_TASKS:-"h1touch-push-v0 h1touch-door-v0 h1touch-cabinet-v0 h1touch-insert_small-v0"}
 PPO_TASKS=${PPO_TASKS:-"$DREAMER_TASKS"}
-DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base aux contact both masked tactile_group part_tokens contact_frontier frontier frontier_bct"}
+DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base aux contact both masked tactile_group part_tokens contact_frontier frontier frontier_bct_flat frontier_bct_native frontier_bct_spatial frontier_bct_no_contact frontier_bct"}
 SEEDS=${SEEDS:-"0 1 2"}
 NOISES=${NOISES:-"0.0 0.02 0.05"}
 DROPS=${DROPS:-"0.0 0.2 0.4"}
@@ -22,6 +22,7 @@ FIGS_DIR=${FIGS_DIR:-outputs/figs_frontier}
 TACTILE_ERROR_CSV=${TACTILE_ERROR_CSV:-outputs/results/tactile_error_vs_success_frontier.csv}
 TACTILE_ERROR_FIG=${TACTILE_ERROR_FIG:-outputs/figs_frontier/tactile_error_vs_success.png}
 DYNAMICS_CSV=${DYNAMICS_CSV:-outputs/results/dynamics_summary_frontier.csv}
+BCT_TOKENS_CSV=${BCT_TOKENS_CSV:-outputs/results/bct_token_diagnostics_frontier.csv}
 
 DREAMER_TASKS="$DREAMER_TASKS" \
 PPO_TASKS="$PPO_TASKS" \
@@ -39,4 +40,5 @@ FIGS_DIR="$FIGS_DIR" \
 TACTILE_ERROR_CSV="$TACTILE_ERROR_CSV" \
 TACTILE_ERROR_FIG="$TACTILE_ERROR_FIG" \
 DYNAMICS_CSV="$DYNAMICS_CSV" \
+BCT_TOKENS_CSV="$BCT_TOKENS_CSV" \
 bash ./run_all.sh

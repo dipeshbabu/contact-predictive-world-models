@@ -79,7 +79,14 @@ class Agent(nj.Module):
         self.obs_space = {
             k: v
             for k, v in obs_space.items()
-            if not k.startswith("log_") and k not in ("success", "success_subtasks")
+            if not k.startswith("log_")
+            and k
+            not in (
+                "success",
+                "success_subtasks",
+                "tactile_part_tokens",
+                "tactile_part_maps",
+            )
         }
         self.act_space = {k: v for k, v in act_space.items() if k != "reset"}
         self.config = config
@@ -135,6 +142,17 @@ class Agent(nj.Module):
             for key in self.wm.contact_aux_keys:
                 if key in raw_data:
                     data[key] = raw_data[key]
+        if (
+            getattr(self.config, "tactile_part_aux_weight", 0.0) > 0
+            and str(getattr(self.config, "tactile_part_aux_source", "flat")) == "native"
+            and "tactile_part_tokens" in raw_data
+        ):
+            data["tactile_part_tokens"] = raw_data["tactile_part_tokens"]
+        if (
+            getattr(self.config, "tactile_part_map_aux_weight", 0.0) > 0
+            and "tactile_part_maps" in raw_data
+        ):
+            data["tactile_part_maps"] = raw_data["tactile_part_maps"]
         for key in ignore_inputs:
             data[key] = jnp.zeros_like(data[key])
         metrics = {}
@@ -158,6 +176,17 @@ class Agent(nj.Module):
         self.config.jax.jit and embodied.print("Tracing report function", "yellow")
         raw_data = data
         data = self.preprocess(data)
+        if (
+            getattr(self.config, "tactile_part_aux_weight", 0.0) > 0
+            and str(getattr(self.config, "tactile_part_aux_source", "flat")) == "native"
+            and "tactile_part_tokens" in raw_data
+        ):
+            data["tactile_part_tokens"] = raw_data["tactile_part_tokens"]
+        if (
+            getattr(self.config, "tactile_part_map_aux_weight", 0.0) > 0
+            and "tactile_part_maps" in raw_data
+        ):
+            data["tactile_part_maps"] = raw_data["tactile_part_maps"]
         report = {}
         report.update(self.wm.report(data, raw_data))
         mets = self.task_behavior.report(data)
@@ -177,6 +206,8 @@ class Agent(nj.Module):
                 "id",
                 "success",
                 "success_subtasks",
+                "tactile_part_tokens",
+                "tactile_part_maps",
             ):
                 continue
             space = spaces[key]
@@ -208,6 +239,7 @@ class WorldModel(nj.Module):
         self.tactile_aux_head = None
         self.tactile_group_aux_head = None
         self.tactile_part_aux_head = None
+        self.tactile_part_map_aux_head = None
         self.contact_aux_heads = []
         # Optional auxiliary head: predict next-step tactile vector from current latent features.
         if "tactile" in obs_space and getattr(config, "tactile_aux_weight", 0.0) > 0:
@@ -238,6 +270,8 @@ class WorldModel(nj.Module):
         if "tactile" in obs_space and getattr(config, "tactile_part_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "tactile_aux_horizon", 1))
             parts = int(getattr(config, "tactile_part_aux_parts", len(TACTILE_PART_NAMES)))
+            if str(getattr(config, "tactile_part_aux_source", "flat")) == "native":
+                parts = len(TACTILE_PART_NAMES)
             if horizon < 1:
                 raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
             if parts < 1:
@@ -248,6 +282,17 @@ class WorldModel(nj.Module):
                 (pred_horizon, parts, 3),
                 **config.tactile_part_aux_head,
                 name="tactile_part_next",
+            )
+        if "tactile" in obs_space and getattr(config, "tactile_part_map_aux_weight", 0.0) > 0:
+            horizon = int(getattr(config, "tactile_aux_horizon", 1))
+            if horizon < 1:
+                raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
+            mode = str(getattr(config, "tactile_aux_mode", "future"))
+            pred_horizon = 1 if mode in ("current", "masked") else horizon
+            self.tactile_part_map_aux_head = nets.MLP(
+                (pred_horizon, len(TACTILE_PART_NAMES), 3, 4, 8),
+                **config.tactile_part_map_aux_head,
+                name="tactile_part_map_next",
             )
         if getattr(config, "contact_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "contact_aux_horizon", 1))
@@ -284,6 +329,10 @@ class WorldModel(nj.Module):
             self.scales["tactile_part_aux"] = float(
                 getattr(self.config, "tactile_part_aux_weight", 0.0)
             )
+        if "tactile_part_map_aux" not in self.scales:
+            self.scales["tactile_part_map_aux"] = float(
+                getattr(self.config, "tactile_part_map_aux_weight", 0.0)
+            )
         if "contact_aux" not in self.scales:
             self.scales["contact_aux"] = float(self.config.contact_aux_weight)
         if "contact_imagine_aux" not in self.scales:
@@ -308,6 +357,8 @@ class WorldModel(nj.Module):
             modules.append(self.tactile_group_aux_head)
         if self.tactile_part_aux_head is not None:
             modules.append(self.tactile_part_aux_head)
+        if self.tactile_part_map_aux_head is not None:
+            modules.append(self.tactile_part_map_aux_head)
         modules += list(self.contact_aux_heads)
         mets, (outs, carry, metrics) = self.opt(
             modules, self.loss, data, carry, ignore_inputs, has_aux=True
@@ -341,6 +392,7 @@ class WorldModel(nj.Module):
             self.tactile_aux_head is not None
             or self.tactile_group_aux_head is not None
             or self.tactile_part_aux_head is not None
+            or self.tactile_part_map_aux_head is not None
         ) and "tactile" in data:
             mode = str(getattr(self.config, "tactile_aux_mode", "future"))
             horizon = int(getattr(self.config, "tactile_aux_horizon", 1))
@@ -438,12 +490,40 @@ class WorldModel(nj.Module):
                 )
                 metrics["tactile_group_aux_groups"] = f32(groups)
 
+            part_threshold = float(
+                getattr(self.config, "tactile_part_aux_threshold", 1e-4)
+            )
             if self.tactile_part_aux_head is not None:
                 parts_count = int(
                     getattr(self.config, "tactile_part_aux_parts", len(TACTILE_PART_NAMES))
                 )
-                threshold = float(getattr(self.config, "tactile_part_aux_threshold", 1e-4))
-                part_tokens = self._tactile_part_tokens(target, parts_count, threshold)
+                part_source = str(getattr(self.config, "tactile_part_aux_source", "flat"))
+                if part_source == "native":
+                    if "tactile_part_tokens" not in data:
+                        raise ValueError(
+                            "tactile_part_aux_source=native requires "
+                            "env.humanoid.tactile_part_tokens=True."
+                        )
+                    native = data["tactile_part_tokens"].astype(f32)
+                    if mode == "future":
+                        part_tokens = jnp.stack(
+                            [
+                                native[:, offset : offset + source_len]
+                                for offset in range(1, horizon + 1)
+                            ],
+                            axis=2,
+                        )
+                    else:
+                        part_tokens = native[:, :source_len, None]
+                    parts_count = int(part_tokens.shape[-2])
+                elif part_source == "flat":
+                    part_tokens = self._tactile_part_tokens(
+                        target, parts_count, part_threshold
+                    )
+                else:
+                    raise NotImplementedError(
+                        f"Unknown tactile_part_aux_source: {part_source}"
+                    )
                 pred_part = self.tactile_part_aux_head(feats_t)
                 part_aux = -pred_part.log_prob(part_tokens)
                 part_aux = part_aux * valid
@@ -452,6 +532,7 @@ class WorldModel(nj.Module):
                     valid.sum(), 1.0
                 )
                 metrics["tactile_part_aux_parts"] = f32(parts_count)
+                metrics["tactile_part_aux_native"] = f32(part_source == "native")
                 pred_mean = pred_part.mean()
                 energy_mae = jnp.abs(pred_mean[..., 0] - part_tokens[..., 0])
                 active_mae = jnp.abs(pred_mean[..., 2] - part_tokens[..., 2])
@@ -463,6 +544,77 @@ class WorldModel(nj.Module):
                 metrics["tactile_part_aux_active_mae"] = (
                     active_mae * valid_part
                 ).sum() / jnp.maximum(part_norm, 1.0)
+                for idx, name in enumerate(TACTILE_PART_NAMES[:parts_count]):
+                    part_valid = valid[:, :, None]
+                    metrics[f"tactile_part_aux/{name}_energy_mae"] = (
+                        energy_mae[..., idx] * part_valid
+                    ).sum() / jnp.maximum(valid.sum() * energy_mae.shape[2], 1.0)
+                    metrics[f"tactile_part_aux/{name}_active_mae"] = (
+                        active_mae[..., idx] * part_valid
+                    ).sum() / jnp.maximum(valid.sum() * active_mae.shape[2], 1.0)
+
+            if self.tactile_part_map_aux_head is not None:
+                if "tactile_part_maps" not in data:
+                    raise ValueError(
+                        "tactile_part_map_aux_weight > 0 requires "
+                        "env.humanoid.tactile_part_maps=True."
+                    )
+                maps = data["tactile_part_maps"].astype(f32)
+                if mode == "future":
+                    map_target = jnp.stack(
+                        [
+                            maps[:, offset : offset + source_len]
+                            for offset in range(1, horizon + 1)
+                        ],
+                        axis=2,
+                    )
+                else:
+                    map_target = maps[:, :source_len, None]
+                pred_maps = self.tactile_part_map_aux_head(feats_t)
+                map_aux = -pred_maps.log_prob(map_target)
+                map_aux = map_aux * valid
+                losses["tactile_part_map_aux"] = map_aux
+                metrics["tactile_part_map_aux_loss"] = map_aux.sum() / jnp.maximum(
+                    valid.sum(), 1.0
+                )
+                pred_mean = pred_maps.mean()
+                map_mae = jnp.abs(pred_mean - map_target)
+                active_mae = jnp.abs(
+                    (jnp.abs(pred_mean) > part_threshold).astype(f32)
+                    - (jnp.abs(map_target) > part_threshold).astype(f32)
+                )
+                valid_map = valid[:, :, :, None, None, None, None]
+                map_horizon = map_mae.shape[2]
+                map_parts = map_mae.shape[3]
+                map_channels = map_mae.shape[4]
+                map_height = map_mae.shape[5]
+                map_width = map_mae.shape[6]
+                denom = (
+                    valid.sum()
+                    * map_horizon
+                    * map_parts
+                    * map_channels
+                    * map_height
+                    * map_width
+                )
+                metrics["tactile_part_map_aux_mae"] = (
+                    map_mae * valid_map
+                ).sum() / jnp.maximum(denom, 1.0)
+                metrics["tactile_part_map_aux_active_mae"] = (
+                    active_mae * valid_map
+                ).sum() / jnp.maximum(denom, 1.0)
+                valid_patch = valid[:, :, :, None, None, None]
+                for idx, name in enumerate(TACTILE_PART_NAMES):
+                    part_denom = (
+                        valid.sum()
+                        * map_horizon
+                        * map_channels
+                        * map_height
+                        * map_width
+                    )
+                    metrics[f"tactile_part_map_aux/{name}_mae"] = (
+                        map_mae[..., idx, :, :, :] * valid_patch
+                    ).sum() / jnp.maximum(part_denom, 1.0)
 
         if self.contact_aux_heads:
             label_keys = [key for key in self.contact_aux_keys if key in data]

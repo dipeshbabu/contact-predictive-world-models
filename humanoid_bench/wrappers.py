@@ -457,6 +457,9 @@ class ObservationWrapper(BaseWrapper):
         # Robustness knobs (used in eval sweeps)
         self.proprio_noise = float(kwargs.get("proprio_noise", 0.0) or 0.0)
         self.tactile_dropout = float(kwargs.get("tactile_dropout", 0.0) or 0.0)
+        self._tactile_part_tokens = str(kwargs.get("tactile_part_tokens", "false")).lower() == "true"
+        self._tactile_part_maps = str(kwargs.get("tactile_part_maps", "false")).lower() == "true"
+        self._tactile_part_threshold = float(kwargs.get("tactile_part_threshold", 1e-4) or 1e-4)
         # New (optional) tactile formatting flags for multimodal RL stability.
         # If tactile_concat is True, all tactile sensors are concatenated into a single 1D vector under key 'tactile'.
         self._tactile_flat = str(kwargs.get("tactile_flat", "false")).lower() == "true"
@@ -510,6 +513,26 @@ class ObservationWrapper(BaseWrapper):
                     "tactile",
                     Box(low=-np.inf, high=np.inf, shape=tactile_example["tactile"].shape, dtype=np.float64),
                 )]
+                if self._tactile_part_tokens and "tactile_part_tokens" in tactile_example:
+                    tactile_spaces.append((
+                        "tactile_part_tokens",
+                        Box(
+                            low=0.0,
+                            high=np.inf,
+                            shape=tactile_example["tactile_part_tokens"].shape,
+                            dtype=np.float64,
+                        ),
+                    ))
+                if self._tactile_part_maps and "tactile_part_maps" in tactile_example:
+                    tactile_spaces.append((
+                        "tactile_part_maps",
+                        Box(
+                            low=-np.inf,
+                            high=np.inf,
+                            shape=tactile_example["tactile_part_maps"].shape,
+                            dtype=np.float64,
+                        ),
+                    ))
             else:
                 tactile_spaces = [
                     (
@@ -557,9 +580,16 @@ class ObservationWrapper(BaseWrapper):
             if self._tactile_concat and "tactile" in tactile:
                 tactile_vec = self._apply_tactile_dropout(tactile["tactile"])
                 obses.append(("tactile", tactile_vec))
+                if self._tactile_part_tokens and "tactile_part_tokens" in tactile:
+                    obses.append(("tactile_part_tokens", tactile["tactile_part_tokens"]))
+                if self._tactile_part_maps and "tactile_part_maps" in tactile:
+                    obses.append(("tactile_part_maps", tactile["tactile_part_maps"]))
             else:
                 dropped = {}
                 for k, v in tactile.items():
+                    if k in ("tactile_part_tokens", "tactile_part_maps"):
+                        dropped[k] = v
+                        continue
                     dropped[k] = self._apply_tactile_dropout(v)
                 obses.extend(list(dropped.items()))
 
@@ -602,6 +632,13 @@ class ObservationWrapper(BaseWrapper):
             else:
                 touch[key] = touch[key].reshape(3, 4, 8)[[1, 2, 0]]
 
+        part_tokens = None
+        if self._tactile_part_tokens:
+            part_tokens = self._compute_tactile_part_tokens(touch)
+        part_maps = None
+        if self._tactile_part_maps:
+            part_maps = self._compute_tactile_part_maps(touch)
+
         # Optional: flatten and concatenate tactile sensors into a single vector.
         if self._tactile_flat:
             for k in list(touch.keys()):
@@ -610,9 +647,105 @@ class ObservationWrapper(BaseWrapper):
             # Stable ordering for reproducibility.
             keys = sorted(touch.keys())
             vec = np.concatenate([touch[k].reshape(-1) for k in keys], axis=0).astype(np.float64)
-            return {"tactile": vec}
+            result = {"tactile": vec}
+            if part_tokens is not None:
+                result["tactile_part_tokens"] = part_tokens
+            if part_maps is not None:
+                result["tactile_part_maps"] = part_maps
+            return result
+
+        if part_tokens is not None:
+            touch["tactile_part_tokens"] = part_tokens
+        if part_maps is not None:
+            touch["tactile_part_maps"] = part_maps
 
         return touch
+
+    def _tactile_part_groups(self, touch):
+        used = set()
+        groups = []
+        for part in (
+            "left_hand",
+            "right_hand",
+            "left_foot",
+            "right_foot",
+            "torso",
+            "left_arm_leg",
+            "right_arm_leg",
+        ):
+            keys = [
+                key for key in sorted(touch)
+                if key not in used and self._matches_tactile_part(key, part)
+            ]
+            used.update(keys)
+            groups.append(keys)
+        groups.append([key for key in sorted(touch) if key not in used])
+        return groups
+
+    def _matches_tactile_part(self, key, part):
+        if part == "left_hand":
+            return "lh_" in key or ("left" in key and "hand" in key)
+        if part == "right_hand":
+            return "rh_" in key or ("right" in key and "hand" in key)
+        if part == "left_foot":
+            return "left_foot" in key or "left_ankle" in key
+        if part == "right_foot":
+            return "right_foot" in key or "right_ankle" in key
+        if part == "torso":
+            return "torso" in key or "pelvis" in key
+        if part == "left_arm_leg":
+            return key.startswith("tactile_left")
+        if part == "right_arm_leg":
+            return key.startswith("tactile_right")
+        return False
+
+    def _compute_tactile_part_tokens(self, touch):
+        tokens = []
+        for keys in self._tactile_part_groups(touch):
+            tokens.append(self._summarize_tactile_keys(touch, keys))
+        return np.asarray(tokens, dtype=np.float64)
+
+    def _compute_tactile_part_maps(self, touch):
+        maps = []
+        for keys in self._tactile_part_groups(touch):
+            maps.append(self._summarize_tactile_maps(touch, keys))
+        return np.asarray(maps, dtype=np.float64)
+
+    def _summarize_tactile_keys(self, touch, keys):
+        if not keys:
+            return np.zeros((3,), dtype=np.float64)
+        values = np.concatenate([np.asarray(touch[key]).reshape(-1) for key in keys], axis=0)
+        values = np.abs(values.astype(np.float64))
+        return np.asarray(
+            [
+                values.mean() if values.size else 0.0,
+                values.max() if values.size else 0.0,
+                (values > self._tactile_part_threshold).mean() if values.size else 0.0,
+            ],
+            dtype=np.float64,
+        )
+
+    def _summarize_tactile_maps(self, touch, keys):
+        if not keys:
+            return np.zeros((3, 4, 8), dtype=np.float64)
+        maps = [self._pad_tactile_map(np.asarray(touch[key])) for key in keys]
+        return np.mean(np.stack(maps, axis=0), axis=0).astype(np.float64)
+
+    def _pad_tactile_map(self, value):
+        value = value.astype(np.float64)
+        if value.ndim != 3:
+            flat = value.reshape(-1)
+            if flat.size == 3 * 2 * 4:
+                value = flat.reshape(3, 2, 4)
+            else:
+                padded = np.zeros((3 * 4 * 8,), dtype=np.float64)
+                padded[: min(flat.size, padded.size)] = flat[: padded.size]
+                value = padded.reshape(3, 4, 8)
+        result = np.zeros((3, 4, 8), dtype=np.float64)
+        h = min(value.shape[-2], 4)
+        w = min(value.shape[-1], 8)
+        result[:, :h, :w] = value[:, :h, :w]
+        return result
 
     def step(self, action):
         _, rew, terminated, truncated, info = self.task.step(action)

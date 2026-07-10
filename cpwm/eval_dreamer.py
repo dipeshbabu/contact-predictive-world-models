@@ -32,8 +32,14 @@ KNOWN_VARIANTS = (
     "contact_frontier",
     "frontier",
     "frontier_bct",
+    "frontier_bct_flat",
+    "frontier_bct_native",
+    "frontier_bct_spatial",
+    "frontier_bct_no_contact",
+    "frontier_bct_no_rgb",
     "frontier_rgb",
     "frontier_rgb_bct",
+    "frontier_rgb_bct_spatial",
     "contact_onset",
     "contact_change",
     "both_onset",
@@ -228,7 +234,7 @@ def main() -> None:
     obs_wrapper = str(humanoid_cfg.get("obs_wrapper", True))
     if variant in ("proprio", "proprio_only"):
         default_sensors = ""
-    elif variant in ("frontier_rgb", "frontier_rgb_bct"):
+    elif variant in ("frontier_rgb", "frontier_rgb_bct", "frontier_rgb_bct_spatial"):
         default_sensors = "tactile,image"
     else:
         default_sensors = "tactile"
@@ -331,8 +337,14 @@ def main() -> None:
             "tactile_group",
             "frontier",
             "frontier_bct",
+            "frontier_bct_flat",
+            "frontier_bct_native",
+            "frontier_bct_spatial",
+            "frontier_bct_no_contact",
+            "frontier_bct_no_rgb",
             "frontier_rgb",
             "frontier_rgb_bct",
+            "frontier_rgb_bct_spatial",
             "noact",
             "future1_noact",
             "both",
@@ -350,7 +362,19 @@ def main() -> None:
             "tactile_group_aux_weight",
             0.05
             if variant
-            in ("tactile_group", "frontier", "frontier_bct", "frontier_rgb", "frontier_rgb_bct")
+            in (
+                "tactile_group",
+                "frontier",
+                "frontier_bct",
+                "frontier_bct_flat",
+                "frontier_bct_native",
+                "frontier_bct_spatial",
+                "frontier_bct_no_contact",
+                "frontier_bct_no_rgb",
+                "frontier_rgb",
+                "frontier_rgb_bct",
+                "frontier_rgb_bct_spatial",
+            )
             else 0.0,
         )
     )
@@ -358,17 +382,85 @@ def main() -> None:
         run_config.get(
             "tactile_part_aux_weight",
             0.05
-            if variant in ("part_tokens", "frontier_bct", "frontier_rgb_bct")
+            if variant
+            in (
+                "part_tokens",
+                "frontier_bct",
+                "frontier_bct_flat",
+                "frontier_bct_native",
+                "frontier_bct_spatial",
+                "frontier_bct_no_contact",
+                "frontier_bct_no_rgb",
+                "frontier_rgb_bct",
+                "frontier_rgb_bct_spatial",
+            )
             else 0.0,
         )
     )
-    if tactile_aux_weight > 0 or tactile_group_aux_weight > 0 or tactile_part_aux_weight > 0:
+    default_part_source = (
+        "flat"
+        if variant in ("part_tokens", "frontier_bct_flat")
+        else "native"
+        if variant
+        in (
+            "frontier_bct",
+            "frontier_bct_native",
+            "frontier_bct_spatial",
+            "frontier_bct_no_contact",
+            "frontier_bct_no_rgb",
+            "frontier_rgb_bct",
+            "frontier_rgb_bct_spatial",
+        )
+        else "flat"
+    )
+    tactile_part_aux_source = str(
+        run_config.get("tactile_part_aux_source", default_part_source)
+    )
+    if tactile_part_aux_weight > 0 and tactile_part_aux_source == "native":
+        cmd += [
+            "--env.humanoid.tactile_part_tokens", "True",
+            "--env.humanoid.tactile_part_threshold",
+            str(run_config.get("tactile_part_aux_threshold", 1e-4)),
+        ]
+    tactile_part_map_aux_weight = float(
+        run_config.get(
+            "tactile_part_map_aux_weight",
+            0.03
+            if variant in ("frontier_bct_spatial", "frontier_rgb_bct_spatial")
+            else 0.0,
+        )
+    )
+    if tactile_part_map_aux_weight > 0:
+        cmd += [
+            "--env.humanoid.tactile_part_maps", "True",
+            "--env.humanoid.tactile_part_threshold",
+            str(run_config.get("tactile_part_aux_threshold", 1e-4)),
+        ]
+    if (
+        tactile_aux_weight > 0
+        or tactile_group_aux_weight > 0
+        or tactile_part_aux_weight > 0
+        or tactile_part_map_aux_weight > 0
+    ):
         default_tactile_mode = (
             "current"
             if variant in ("recon", "current")
             else "masked"
             if variant
-            in ("masked", "part_tokens", "frontier", "frontier_bct", "frontier_rgb", "frontier_rgb_bct")
+            in (
+                "masked",
+                "part_tokens",
+                "frontier",
+                "frontier_bct",
+                "frontier_bct_flat",
+                "frontier_bct_native",
+                "frontier_bct_spatial",
+                "frontier_bct_no_contact",
+                "frontier_bct_no_rgb",
+                "frontier_rgb",
+                "frontier_rgb_bct",
+                "frontier_rgb_bct_spatial",
+            )
             else "future"
         )
         default_tactile_horizon = 3 if variant == "future3" else 5 if variant == "future5" else 1
@@ -396,6 +488,11 @@ def main() -> None:
             "--tactile_part_aux_parts", str(run_config.get("tactile_part_aux_parts", 8)),
             "--tactile_part_aux_threshold",
             str(run_config.get("tactile_part_aux_threshold", 1e-4)),
+            "--tactile_part_aux_source", tactile_part_aux_source,
+        ]
+    if tactile_part_map_aux_weight > 0:
+        cmd += [
+            "--tactile_part_map_aux_weight", str(tactile_part_map_aux_weight),
         ]
     default_contact_aux = (
         0.1
@@ -409,8 +506,13 @@ def main() -> None:
             "contact_change",
             "frontier",
             "frontier_bct",
+            "frontier_bct_flat",
+            "frontier_bct_native",
+            "frontier_bct_spatial",
+            "frontier_bct_no_rgb",
             "frontier_rgb",
             "frontier_rgb_bct",
+            "frontier_rgb_bct_spatial",
             "both",
             "aux_contact",
             "both_onset",
@@ -429,8 +531,13 @@ def main() -> None:
             "contact_frontier",
             "frontier",
             "frontier_bct",
+            "frontier_bct_flat",
+            "frontier_bct_native",
+            "frontier_bct_spatial",
+            "frontier_bct_no_rgb",
             "frontier_rgb",
             "frontier_rgb_bct",
+            "frontier_rgb_bct_spatial",
         ):
             default_contact_mode = "onset"
         elif variant in ("contact_change", "both_change", "aux_contact_change"):
@@ -451,8 +558,13 @@ def main() -> None:
                         "contact_frontier",
                         "frontier",
                         "frontier_bct",
+                        "frontier_bct_flat",
+                        "frontier_bct_native",
+                        "frontier_bct_spatial",
+                        "frontier_bct_no_rgb",
                         "frontier_rgb",
                         "frontier_rgb_bct",
+                        "frontier_rgb_bct_spatial",
                     ),
                 )
             ),
@@ -465,8 +577,13 @@ def main() -> None:
                         "contact_frontier",
                         "frontier",
                         "frontier_bct",
+                        "frontier_bct_flat",
+                        "frontier_bct_native",
+                        "frontier_bct_spatial",
+                        "frontier_bct_no_rgb",
                         "frontier_rgb",
                         "frontier_rgb_bct",
+                        "frontier_rgb_bct_spatial",
                     ),
                 )
             ),
@@ -480,8 +597,13 @@ def main() -> None:
                         "contact_frontier",
                         "frontier",
                         "frontier_bct",
+                        "frontier_bct_flat",
+                        "frontier_bct_native",
+                        "frontier_bct_spatial",
+                        "frontier_bct_no_rgb",
                         "frontier_rgb",
                         "frontier_rgb_bct",
+                        "frontier_rgb_bct_spatial",
                     )
                     else 1,
                 )
@@ -496,8 +618,13 @@ def main() -> None:
                         "contact_frontier",
                         "frontier",
                         "frontier_bct",
+                        "frontier_bct_flat",
+                        "frontier_bct_native",
+                        "frontier_bct_spatial",
+                        "frontier_bct_no_rgb",
                         "frontier_rgb",
                         "frontier_rgb_bct",
+                        "frontier_rgb_bct_spatial",
                     )
                     else 0.0,
                 )

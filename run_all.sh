@@ -25,10 +25,12 @@ AUX_OFF=${AUX_OFF:-0.0}
 CONTACT_AUX_ON=${CONTACT_AUX_ON:-0.1}
 TACTILE_GROUP_AUX_ON=${TACTILE_GROUP_AUX_ON:-0.05}
 TACTILE_PART_AUX_ON=${TACTILE_PART_AUX_ON:-0.05}
+TACTILE_PART_MAP_AUX_ON=${TACTILE_PART_MAP_AUX_ON:-0.03}
 TACTILE_MASK_PROB=${TACTILE_MASK_PROB:-0.25}
 TACTILE_AUX_GROUPS=${TACTILE_AUX_GROUPS:-8}
 TACTILE_PART_AUX_PARTS=${TACTILE_PART_AUX_PARTS:-8}
 TACTILE_PART_AUX_THRESHOLD=${TACTILE_PART_AUX_THRESHOLD:-1e-4}
+TACTILE_PART_AUX_SOURCE=${TACTILE_PART_AUX_SOURCE:-native}
 CONTACT_IMAGINE_ON=${CONTACT_IMAGINE_ON:-0.05}
 CONTACT_AUX_ENSEMBLE=${CONTACT_AUX_ENSEMBLE:-4}
 CONTACT_LABEL_OVERRIDES=${CONTACT_LABEL_OVERRIDES:-}
@@ -62,6 +64,7 @@ FIGS_DIR=${FIGS_DIR:-outputs/figs}
 TACTILE_ERROR_CSV=${TACTILE_ERROR_CSV:-outputs/results/tactile_error_vs_success.csv}
 TACTILE_ERROR_FIG=${TACTILE_ERROR_FIG:-outputs/figs/tactile_error_vs_success.png}
 DYNAMICS_CSV=${DYNAMICS_CSV:-outputs/results/dynamics_summary.csv}
+BCT_TOKENS_CSV=${BCT_TOKENS_CSV:-outputs/results/bct_token_diagnostics.csv}
 
 mkdir -p "$RUNS_DIR" "$(dirname "$RESULTS_CSV")" "$FIGS_DIR"
 
@@ -136,12 +139,12 @@ train_dreamer_one () {
     args+=(--no_contact_aux_action)
   fi
   case "$variant" in
-    masked|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct|part_tokens)
+    masked|frontier|frontier_rgb|frontier_bct|frontier_bct_flat|frontier_bct_native|frontier_bct_spatial|frontier_bct_no_contact|frontier_bct_no_rgb|frontier_rgb_bct|frontier_rgb_bct_spatial|part_tokens)
       args+=(--tactile_mask_prob "${TACTILE_MASK_PROB}")
       ;;
   esac
   case "$variant" in
-    tactile_group|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct)
+    tactile_group|frontier|frontier_rgb|frontier_bct|frontier_bct_flat|frontier_bct_native|frontier_bct_spatial|frontier_bct_no_contact|frontier_bct_no_rgb|frontier_rgb_bct|frontier_rgb_bct_spatial)
       args+=(
         --tactile_group_aux_weight "${TACTILE_GROUP_AUX_ON}"
         --tactile_aux_groups "${TACTILE_AUX_GROUPS}"
@@ -149,16 +152,25 @@ train_dreamer_one () {
       ;;
   esac
   case "$variant" in
-    part_tokens|frontier_bct|frontier_rgb_bct)
+    part_tokens|frontier_bct|frontier_bct_flat|frontier_bct_native|frontier_bct_spatial|frontier_bct_no_contact|frontier_bct_no_rgb|frontier_rgb_bct|frontier_rgb_bct_spatial)
+      part_source="${TACTILE_PART_AUX_SOURCE}"
+      [[ "$variant" == "part_tokens" || "$variant" == "frontier_bct_flat" ]] && part_source="flat"
+      [[ "$variant" == "frontier_bct" || "$variant" == "frontier_bct_native" || "$variant" == "frontier_bct_spatial" || "$variant" == "frontier_bct_no_contact" || "$variant" == "frontier_bct_no_rgb" || "$variant" == "frontier_rgb_bct" || "$variant" == "frontier_rgb_bct_spatial" ]] && part_source="native"
       args+=(
         --tactile_part_aux_weight "${TACTILE_PART_AUX_ON}"
         --tactile_part_aux_parts "${TACTILE_PART_AUX_PARTS}"
         --tactile_part_aux_threshold "${TACTILE_PART_AUX_THRESHOLD}"
+        --tactile_part_aux_source "${part_source}"
       )
       ;;
   esac
   case "$variant" in
-    contact_frontier|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct)
+    frontier_bct_spatial|frontier_rgb_bct_spatial)
+      args+=(--tactile_part_map_aux_weight "${TACTILE_PART_MAP_AUX_ON}")
+      ;;
+  esac
+  case "$variant" in
+    contact_frontier|frontier|frontier_rgb|frontier_bct|frontier_bct_flat|frontier_bct_native|frontier_bct_spatial|frontier_bct_no_rgb|frontier_rgb_bct|frontier_rgb_bct_spatial)
       args+=(
         --contact_aux_balanced
         --contact_aux_rich_labels
@@ -247,7 +259,25 @@ dreamer_variant_config () {
     frontier_bct)
       echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
       ;;
+    frontier_bct_flat)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    frontier_bct_native)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    frontier_bct_spatial)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    frontier_bct_no_contact)
+      echo "${AUX_ON} masked 1 1 ${AUX_OFF} future 1 1 tactile"
+      ;;
+    frontier_bct_no_rgb)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
     frontier_rgb_bct)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile,image"
+      ;;
+    frontier_rgb_bct_spatial)
       echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile,image"
       ;;
     *)
@@ -479,11 +509,16 @@ if [[ "$DRY_RUN" != "1" && "$RUN_EVAL" == "1" ]]; then
     --csv "${RESULTS_CSV}" \
     --out "${DYNAMICS_CSV}" || { echo "[DYNAMICS ANALYSIS FAIL]"; FAILS=$((FAILS+1)); }
 
+  python cpwm/analysis_bct_tokens.py \
+    --runs_dir "${RUNS_DIR}" \
+    --out "${BCT_TOKENS_CSV}" || { echo "[BCT TOKEN ANALYSIS FAIL]"; FAILS=$((FAILS+1)); }
+
   [[ -s "${RESULTS_CSV}" ]] || { echo "[MISSING RESULTS CSV] ${RESULTS_CSV}"; FAILS=$((FAILS+1)); }
   [[ -f "${ANALYSIS_CSV}" ]] || { echo "[MISSING ANALYSIS CSV] ${ANALYSIS_CSV}"; FAILS=$((FAILS+1)); }
   [[ -f "${TACTILE_ERROR_CSV}" ]] || { echo "[MISSING TACTILE ERROR CSV] ${TACTILE_ERROR_CSV}"; FAILS=$((FAILS+1)); }
   [[ -f "${TACTILE_ERROR_FIG}" ]] || { echo "[MISSING TACTILE ERROR FIG] ${TACTILE_ERROR_FIG}"; FAILS=$((FAILS+1)); }
   [[ -f "${DYNAMICS_CSV}" ]] || { echo "[MISSING DYNAMICS CSV] ${DYNAMICS_CSV}"; FAILS=$((FAILS+1)); }
+  [[ -f "${BCT_TOKENS_CSV}" ]] || { echo "[MISSING BCT TOKENS CSV] ${BCT_TOKENS_CSV}"; FAILS=$((FAILS+1)); }
 
   shopt -s nullglob
   fig_files=("${FIGS_DIR}"/*.png)

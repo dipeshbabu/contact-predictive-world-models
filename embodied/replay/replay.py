@@ -101,7 +101,11 @@ class Replay:
     @embodied.timer.section("replay_add")
     def add(self, step, worker=0):
         with self.rwlock.reading:
-            step = {k: v for k, v in step.items() if not k.startswith("log_")}
+            step = {
+                k: v
+                for k, v in step.items()
+                if not k.startswith("log_") or k.startswith("log_contact_")
+            }
             step = {k: np.asarray(v) for k, v in step.items()}
             # step['id'] = np.asarray(embodied.uuid(step.get('id')))
 

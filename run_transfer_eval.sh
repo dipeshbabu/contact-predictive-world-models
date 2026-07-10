@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 RUNS_DIR=${RUNS_DIR:-outputs/runs_frontier}
 DREAMER_CONFIGS=${DREAMER_CONFIGS:-humanoid_benchmark}
 DREAMER_TASKS=${DREAMER_TASKS:-"h1touch-push-v0 h1touch-door-v0 h1touch-cabinet-v0 h1touch-insert_small-v0"}
-DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base frontier frontier_bct frontier_rgb_bct"}
+DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base frontier frontier_bct_native frontier_bct_spatial frontier_rgb_bct_spatial"}
 SEEDS=${SEEDS:-"0 1 2"}
 EVAL_STEPS=${EVAL_STEPS:-20000}
 NOISES=${NOISES:-"0.0 0.02 0.05 0.1"}
