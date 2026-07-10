@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 # masked tactile modeling, grouped tactile summaries, and optional RGB.
 DREAMER_TASKS=${DREAMER_TASKS:-"h1touch-push-v0 h1touch-door-v0 h1touch-cabinet-v0 h1touch-insert_small-v0"}
 PPO_TASKS=${PPO_TASKS:-"$DREAMER_TASKS"}
-DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base aux contact both masked tactile_group contact_frontier frontier"}
+DREAMER_VARIANTS=${DREAMER_VARIANTS:-"base aux contact both masked tactile_group part_tokens contact_frontier frontier frontier_bct"}
 SEEDS=${SEEDS:-"0 1 2"}
 NOISES=${NOISES:-"0.0 0.02 0.05"}
 DROPS=${DROPS:-"0.0 0.2 0.4"}

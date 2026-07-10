@@ -28,9 +28,12 @@ KNOWN_VARIANTS = (
     "future5",
     "masked",
     "tactile_group",
+    "part_tokens",
     "contact_frontier",
     "frontier",
+    "frontier_bct",
     "frontier_rgb",
+    "frontier_rgb_bct",
     "contact_onset",
     "contact_change",
     "both_onset",
@@ -147,6 +150,7 @@ def _infer_run_name(name: str) -> Optional[tuple[str, str, int]]:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run_dir", required=True)
+    ap.add_argument("--configs", default="humanoid_benchmark")
     ap.add_argument("--steps", type=int, default=20000)
     ap.add_argument("--noise", type=float, default=0.0)
     ap.add_argument("--tactile_dropout", type=float, default=0.0)
@@ -224,7 +228,7 @@ def main() -> None:
     obs_wrapper = str(humanoid_cfg.get("obs_wrapper", True))
     if variant in ("proprio", "proprio_only"):
         default_sensors = ""
-    elif variant == "frontier_rgb":
+    elif variant in ("frontier_rgb", "frontier_rgb_bct"):
         default_sensors = "tactile,image"
     else:
         default_sensors = "tactile"
@@ -285,7 +289,7 @@ def main() -> None:
 
     cmd = [
         sys.executable, "-m", "embodied.agents.dreamerv3.train",
-        "--configs", "humanoid_benchmark",
+        "--configs", args.configs,
         "--task", f"humanoid_{env}",
         "--logdir", str(eval_dir),
         "--seed", str(seed),
@@ -326,7 +330,9 @@ def main() -> None:
             "masked",
             "tactile_group",
             "frontier",
+            "frontier_bct",
             "frontier_rgb",
+            "frontier_rgb_bct",
             "noact",
             "future1_noact",
             "both",
@@ -342,15 +348,27 @@ def main() -> None:
     tactile_group_aux_weight = float(
         run_config.get(
             "tactile_group_aux_weight",
-            0.05 if variant in ("tactile_group", "frontier", "frontier_rgb") else 0.0,
+            0.05
+            if variant
+            in ("tactile_group", "frontier", "frontier_bct", "frontier_rgb", "frontier_rgb_bct")
+            else 0.0,
         )
     )
-    if tactile_aux_weight > 0 or tactile_group_aux_weight > 0:
+    tactile_part_aux_weight = float(
+        run_config.get(
+            "tactile_part_aux_weight",
+            0.05
+            if variant in ("part_tokens", "frontier_bct", "frontier_rgb_bct")
+            else 0.0,
+        )
+    )
+    if tactile_aux_weight > 0 or tactile_group_aux_weight > 0 or tactile_part_aux_weight > 0:
         default_tactile_mode = (
             "current"
             if variant in ("recon", "current")
             else "masked"
-            if variant in ("masked", "frontier", "frontier_rgb")
+            if variant
+            in ("masked", "part_tokens", "frontier", "frontier_bct", "frontier_rgb", "frontier_rgb_bct")
             else "future"
         )
         default_tactile_horizon = 3 if variant == "future3" else 5 if variant == "future5" else 1
@@ -372,6 +390,13 @@ def main() -> None:
             "--tactile_group_aux_weight", str(tactile_group_aux_weight),
             "--tactile_aux_groups", str(run_config.get("tactile_aux_groups", 8)),
         ]
+    if tactile_part_aux_weight > 0:
+        cmd += [
+            "--tactile_part_aux_weight", str(tactile_part_aux_weight),
+            "--tactile_part_aux_parts", str(run_config.get("tactile_part_aux_parts", 8)),
+            "--tactile_part_aux_threshold",
+            str(run_config.get("tactile_part_aux_threshold", 1e-4)),
+        ]
     default_contact_aux = (
         0.1
         if variant
@@ -383,7 +408,9 @@ def main() -> None:
             "contact_onset",
             "contact_change",
             "frontier",
+            "frontier_bct",
             "frontier_rgb",
+            "frontier_rgb_bct",
             "both",
             "aux_contact",
             "both_onset",
@@ -398,7 +425,13 @@ def main() -> None:
         default_contact_mode = "future"
         if variant in ("contact_onset", "both_onset", "aux_contact_onset"):
             default_contact_mode = "onset"
-        elif variant in ("contact_frontier", "frontier", "frontier_rgb"):
+        elif variant in (
+            "contact_frontier",
+            "frontier",
+            "frontier_bct",
+            "frontier_rgb",
+            "frontier_rgb_bct",
+        ):
             default_contact_mode = "onset"
         elif variant in ("contact_change", "both_change", "aux_contact_change"):
             default_contact_mode = "change"
@@ -410,13 +443,65 @@ def main() -> None:
             str(run_config.get("contact_aux_horizon", 3 if variant == "contact3" else 1)),
             "--contact_aux_action", str(run_config.get("contact_aux_action", True)),
             "--contact_aux_balanced",
-            str(run_config.get("contact_aux_balanced", variant in ("contact_frontier", "frontier", "frontier_rgb"))),
+            str(
+                run_config.get(
+                    "contact_aux_balanced",
+                    variant
+                    in (
+                        "contact_frontier",
+                        "frontier",
+                        "frontier_bct",
+                        "frontier_rgb",
+                        "frontier_rgb_bct",
+                    ),
+                )
+            ),
             "--contact_aux_rich_labels",
-            str(run_config.get("contact_aux_rich_labels", variant in ("contact_frontier", "frontier", "frontier_rgb"))),
+            str(
+                run_config.get(
+                    "contact_aux_rich_labels",
+                    variant
+                    in (
+                        "contact_frontier",
+                        "frontier",
+                        "frontier_bct",
+                        "frontier_rgb",
+                        "frontier_rgb_bct",
+                    ),
+                )
+            ),
             "--contact_aux_ensemble",
-            str(run_config.get("contact_aux_ensemble", 4 if variant in ("contact_frontier", "frontier", "frontier_rgb") else 1)),
+            str(
+                run_config.get(
+                    "contact_aux_ensemble",
+                    4
+                    if variant
+                    in (
+                        "contact_frontier",
+                        "frontier",
+                        "frontier_bct",
+                        "frontier_rgb",
+                        "frontier_rgb_bct",
+                    )
+                    else 1,
+                )
+            ),
             "--contact_imagine_weight",
-            str(run_config.get("contact_imagine_weight", 0.05 if variant in ("contact_frontier", "frontier", "frontier_rgb") else 0.0)),
+            str(
+                run_config.get(
+                    "contact_imagine_weight",
+                    0.05
+                    if variant
+                    in (
+                        "contact_frontier",
+                        "frontier",
+                        "frontier_bct",
+                        "frontier_rgb",
+                        "frontier_rgb_bct",
+                    )
+                    else 0.0,
+                )
+            ),
         ]
 
     print("[EVAL CMD]", " ".join(cmd))

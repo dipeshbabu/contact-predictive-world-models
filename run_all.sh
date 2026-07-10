@@ -18,13 +18,17 @@ PPO_EVAL_EPISODES=${PPO_EVAL_EPISODES:-20}
 NUM_ENVS=${NUM_ENVS:-4}
 PPO_NUM_ENVS=${PPO_NUM_ENVS:-4}
 JAX_PLATFORM=${JAX_PLATFORM:-gpu}
+DREAMER_CONFIGS=${DREAMER_CONFIGS:-humanoid_benchmark}
 
 AUX_ON=${AUX_ON:-0.1}
 AUX_OFF=${AUX_OFF:-0.0}
 CONTACT_AUX_ON=${CONTACT_AUX_ON:-0.1}
 TACTILE_GROUP_AUX_ON=${TACTILE_GROUP_AUX_ON:-0.05}
+TACTILE_PART_AUX_ON=${TACTILE_PART_AUX_ON:-0.05}
 TACTILE_MASK_PROB=${TACTILE_MASK_PROB:-0.25}
 TACTILE_AUX_GROUPS=${TACTILE_AUX_GROUPS:-8}
+TACTILE_PART_AUX_PARTS=${TACTILE_PART_AUX_PARTS:-8}
+TACTILE_PART_AUX_THRESHOLD=${TACTILE_PART_AUX_THRESHOLD:-1e-4}
 CONTACT_IMAGINE_ON=${CONTACT_IMAGINE_ON:-0.05}
 CONTACT_AUX_ENSEMBLE=${CONTACT_AUX_ENSEMBLE:-4}
 CONTACT_LABEL_OVERRIDES=${CONTACT_LABEL_OVERRIDES:-}
@@ -43,7 +47,10 @@ FRICTION_SCALES=${FRICTION_SCALES:-"1.0 0.8 1.2"}
 RUN_PPO=${RUN_PPO:-1}
 RUN_PPO_TACTILE=${RUN_PPO_TACTILE:-1}
 RUN_DYNAMICS=${RUN_DYNAMICS:-1}
+RUN_EVAL=${RUN_EVAL:-1}
 DRY_RUN=${DRY_RUN:-0}
+PRETRAIN_WORLD_MODEL_ONLY=${PRETRAIN_WORLD_MODEL_ONLY:-0}
+FROM_CHECKPOINT=${FROM_CHECKPOINT:-}
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -70,7 +77,10 @@ echo "PPO_EVAL_EPISODES=$PPO_EVAL_EPISODES"
 echo "NUM_ENVS=$NUM_ENVS"
 echo "PPO_NUM_ENVS=$PPO_NUM_ENVS"
 echo "JAX_PLATFORM=$JAX_PLATFORM"
+echo "DREAMER_CONFIGS=$DREAMER_CONFIGS"
 echo "RUN_PPO_TACTILE=$RUN_PPO_TACTILE"
+echo "RUN_EVAL=$RUN_EVAL"
+echo "PRETRAIN_WORLD_MODEL_ONLY=$PRETRAIN_WORLD_MODEL_ONLY"
 echo "DRY_RUN=$DRY_RUN"
 
 train_dreamer_one () {
@@ -92,6 +102,7 @@ train_dreamer_one () {
     --seed "${seed}"
     --steps "${TRAIN_STEPS}"
     --num_envs "${NUM_ENVS}"
+    --configs "${DREAMER_CONFIGS}"
     --jax_platform "${JAX_PLATFORM}"
     --tactile_aux_weight "${aux_weight}"
     --tactile_aux_mode "${aux_mode}"
@@ -111,6 +122,13 @@ train_dreamer_one () {
     --logdir "${logdir}"
   )
 
+  if [[ -n "${FROM_CHECKPOINT}" ]]; then
+    args+=(--from_checkpoint "${FROM_CHECKPOINT}")
+  fi
+  if [[ "${PRETRAIN_WORLD_MODEL_ONLY}" == "1" ]]; then
+    args+=(--pretrain_world_model_only)
+  fi
+
   if [[ "${aux_action}" != "1" ]]; then
     args+=(--no_tactile_aux_action)
   fi
@@ -118,12 +136,12 @@ train_dreamer_one () {
     args+=(--no_contact_aux_action)
   fi
   case "$variant" in
-    masked|frontier|frontier_rgb)
+    masked|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct|part_tokens)
       args+=(--tactile_mask_prob "${TACTILE_MASK_PROB}")
       ;;
   esac
   case "$variant" in
-    tactile_group|frontier|frontier_rgb)
+    tactile_group|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct)
       args+=(
         --tactile_group_aux_weight "${TACTILE_GROUP_AUX_ON}"
         --tactile_aux_groups "${TACTILE_AUX_GROUPS}"
@@ -131,7 +149,16 @@ train_dreamer_one () {
       ;;
   esac
   case "$variant" in
-    contact_frontier|frontier|frontier_rgb)
+    part_tokens|frontier_bct|frontier_rgb_bct)
+      args+=(
+        --tactile_part_aux_weight "${TACTILE_PART_AUX_ON}"
+        --tactile_part_aux_parts "${TACTILE_PART_AUX_PARTS}"
+        --tactile_part_aux_threshold "${TACTILE_PART_AUX_THRESHOLD}"
+      )
+      ;;
+  esac
+  case "$variant" in
+    contact_frontier|frontier|frontier_rgb|frontier_bct|frontier_rgb_bct)
       args+=(
         --contact_aux_balanced
         --contact_aux_rich_labels
@@ -181,6 +208,9 @@ dreamer_variant_config () {
     tactile_group)
       echo "${AUX_ON} future 1 1 ${AUX_OFF} future 1 1 tactile"
       ;;
+    part_tokens)
+      echo "${AUX_OFF} masked 1 1 ${AUX_OFF} future 1 1 tactile"
+      ;;
     noact|future1_noact)
       echo "${AUX_ON} future 1 0 ${AUX_OFF} future 1 1 tactile"
       ;;
@@ -214,6 +244,12 @@ dreamer_variant_config () {
     frontier_rgb)
       echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile,image"
       ;;
+    frontier_bct)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile"
+      ;;
+    frontier_rgb_bct)
+      echo "${AUX_ON} masked 1 1 ${CONTACT_AUX_ON} onset 1 1 tactile,image"
+      ;;
     *)
       echo "Unknown DREAMER variant: ${variant}" >&2
       return 1
@@ -229,6 +265,7 @@ eval_dreamer_one () {
   local fric="$5"
   local args=(
     --run_dir "${run_dir}"
+    --configs "${DREAMER_CONFIGS}"
     --steps "${EVAL_STEPS}"
     --noise "${noise}"
     --tactile_dropout "${drop}"
@@ -341,33 +378,37 @@ for env in $DREAMER_TASKS; do
   done
 done
 
-for env in $DREAMER_TASKS; do
-  for seed in $SEEDS; do
-    for variant in $DREAMER_VARIANTS; do
-      run_dir="${RUNS_DIR}/${env}_${variant}_s${seed}"
-      if [[ "$DRY_RUN" != "1" && ! -d "${run_dir}" ]]; then
-        echo "[SKIP DREAMER EVAL] missing run dir ${run_dir}"
-        FAILS=$((FAILS+1))
-        continue
-      fi
+if [[ "$RUN_EVAL" == "1" ]]; then
+  for env in $DREAMER_TASKS; do
+    for seed in $SEEDS; do
+      for variant in $DREAMER_VARIANTS; do
+        run_dir="${RUNS_DIR}/${env}_${variant}_s${seed}"
+        if [[ "$DRY_RUN" != "1" && ! -d "${run_dir}" ]]; then
+          echo "[SKIP DREAMER EVAL] missing run dir ${run_dir}"
+          FAILS=$((FAILS+1))
+          continue
+        fi
 
-      for noise in $NOISES; do
-        for drop in $DROPS; do
-          eval_dreamer_one "$run_dir" "$noise" "$drop" "1.0" "1.0" || { echo "[DREAMER EVAL FAIL] $run_dir noise=$noise drop=$drop"; FAILS=$((FAILS+1)); }
-        done
-      done
-
-      if [[ "$RUN_DYNAMICS" == "1" ]]; then
-        for mass in $MASS_SCALES; do
-          for fric in $FRICTION_SCALES; do
-            [[ "$mass" == "1.0" && "$fric" == "1.0" ]] && continue
-            eval_dreamer_one "$run_dir" "0.0" "0.0" "$mass" "$fric" || { echo "[DREAMER DYNAMICS FAIL] $run_dir mass=$mass fric=$fric"; FAILS=$((FAILS+1)); }
+        for noise in $NOISES; do
+          for drop in $DROPS; do
+            eval_dreamer_one "$run_dir" "$noise" "$drop" "1.0" "1.0" || { echo "[DREAMER EVAL FAIL] $run_dir noise=$noise drop=$drop"; FAILS=$((FAILS+1)); }
           done
         done
-      fi
+
+        if [[ "$RUN_DYNAMICS" == "1" ]]; then
+          for mass in $MASS_SCALES; do
+            for fric in $FRICTION_SCALES; do
+              [[ "$mass" == "1.0" && "$fric" == "1.0" ]] && continue
+              eval_dreamer_one "$run_dir" "0.0" "0.0" "$mass" "$fric" || { echo "[DREAMER DYNAMICS FAIL] $run_dir mass=$mass fric=$fric"; FAILS=$((FAILS+1)); }
+            done
+          done
+        fi
+      done
     done
   done
-done
+else
+  echo "[SKIP DREAMER EVAL] RUN_EVAL=0"
+fi
 
 if [[ "$RUN_PPO" == "1" ]]; then
   PPO_VARIANTS="ppo_proprio"
@@ -384,6 +425,7 @@ if [[ "$RUN_PPO" == "1" ]]; then
     done
   done
 
+  if [[ "$RUN_EVAL" == "1" ]]; then
   for env in $PPO_TASKS; do
     for seed in $SEEDS; do
       for variant in $PPO_VARIANTS; do
@@ -413,9 +455,12 @@ if [[ "$RUN_PPO" == "1" ]]; then
       done
     done
   done
+  else
+    echo "[SKIP PPO EVAL] RUN_EVAL=0"
+  fi
 fi
 
-if [[ "$DRY_RUN" != "1" ]]; then
+if [[ "$DRY_RUN" != "1" && "$RUN_EVAL" == "1" ]]; then
   python cpwm/plot_results.py \
     --csv "${RESULTS_CSV}" \
     --outdir "${FIGS_DIR}" || { echo "[PLOT FAIL]"; FAILS=$((FAILS+1)); }

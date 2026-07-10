@@ -50,6 +50,16 @@ RICH_CONTACT_AUX_KEYS = (
     "log_contact_object_table",
 )
 CONTACT_AUX_KEYS = BASE_CONTACT_AUX_KEYS + RICH_CONTACT_AUX_KEYS
+TACTILE_PART_NAMES = (
+    "left_hand",
+    "right_hand",
+    "left_foot",
+    "right_foot",
+    "torso",
+    "left_arm_leg",
+    "right_arm_leg",
+    "residual",
+)
 
 
 def contact_aux_keys(config):
@@ -117,6 +127,8 @@ class Agent(nj.Module):
 
     def train(self, data, carry, train_wm=True, train_ac=True, ignore_inputs=()):
         self.config.jax.jit and embodied.print("Tracing train function", "yellow")
+        train_wm = bool(getattr(self.config.run, "train_wm", train_wm))
+        train_ac = bool(getattr(self.config.run, "train_ac", train_ac))
         raw_data = data
         data = self.preprocess(data)
         if getattr(self.config, "contact_aux_weight", 0.0) > 0:
@@ -195,6 +207,7 @@ class WorldModel(nj.Module):
         self.contact_aux_keys = contact_aux_keys(config)
         self.tactile_aux_head = None
         self.tactile_group_aux_head = None
+        self.tactile_part_aux_head = None
         self.contact_aux_heads = []
         # Optional auxiliary head: predict next-step tactile vector from current latent features.
         if "tactile" in obs_space and getattr(config, "tactile_aux_weight", 0.0) > 0:
@@ -221,6 +234,20 @@ class WorldModel(nj.Module):
                 (pred_horizon, groups),
                 **config.tactile_group_aux_head,
                 name="tactile_group_next",
+            )
+        if "tactile" in obs_space and getattr(config, "tactile_part_aux_weight", 0.0) > 0:
+            horizon = int(getattr(config, "tactile_aux_horizon", 1))
+            parts = int(getattr(config, "tactile_part_aux_parts", len(TACTILE_PART_NAMES)))
+            if horizon < 1:
+                raise ValueError(f"tactile_aux_horizon must be >= 1, got {horizon}")
+            if parts < 1:
+                raise ValueError(f"tactile_part_aux_parts must be >= 1, got {parts}")
+            mode = str(getattr(config, "tactile_aux_mode", "future"))
+            pred_horizon = 1 if mode in ("current", "masked") else horizon
+            self.tactile_part_aux_head = nets.MLP(
+                (pred_horizon, parts, 3),
+                **config.tactile_part_aux_head,
+                name="tactile_part_next",
             )
         if getattr(config, "contact_aux_weight", 0.0) > 0:
             horizon = int(getattr(config, "contact_aux_horizon", 1))
@@ -253,6 +280,10 @@ class WorldModel(nj.Module):
             self.scales["tactile_group_aux"] = float(
                 getattr(self.config, "tactile_group_aux_weight", 0.0)
             )
+        if "tactile_part_aux" not in self.scales:
+            self.scales["tactile_part_aux"] = float(
+                getattr(self.config, "tactile_part_aux_weight", 0.0)
+            )
         if "contact_aux" not in self.scales:
             self.scales["contact_aux"] = float(self.config.contact_aux_weight)
         if "contact_imagine_aux" not in self.scales:
@@ -275,6 +306,8 @@ class WorldModel(nj.Module):
             modules.append(self.tactile_aux_head)
         if self.tactile_group_aux_head is not None:
             modules.append(self.tactile_group_aux_head)
+        if self.tactile_part_aux_head is not None:
+            modules.append(self.tactile_part_aux_head)
         modules += list(self.contact_aux_heads)
         mets, (outs, carry, metrics) = self.opt(
             modules, self.loss, data, carry, ignore_inputs, has_aux=True
@@ -307,6 +340,7 @@ class WorldModel(nj.Module):
         if (
             self.tactile_aux_head is not None
             or self.tactile_group_aux_head is not None
+            or self.tactile_part_aux_head is not None
         ) and "tactile" in data:
             mode = str(getattr(self.config, "tactile_aux_mode", "future"))
             horizon = int(getattr(self.config, "tactile_aux_horizon", 1))
@@ -403,6 +437,32 @@ class WorldModel(nj.Module):
                     valid.sum(), 1.0
                 )
                 metrics["tactile_group_aux_groups"] = f32(groups)
+
+            if self.tactile_part_aux_head is not None:
+                parts_count = int(
+                    getattr(self.config, "tactile_part_aux_parts", len(TACTILE_PART_NAMES))
+                )
+                threshold = float(getattr(self.config, "tactile_part_aux_threshold", 1e-4))
+                part_tokens = self._tactile_part_tokens(target, parts_count, threshold)
+                pred_part = self.tactile_part_aux_head(feats_t)
+                part_aux = -pred_part.log_prob(part_tokens)
+                part_aux = part_aux * valid
+                losses["tactile_part_aux"] = part_aux
+                metrics["tactile_part_aux_loss"] = part_aux.sum() / jnp.maximum(
+                    valid.sum(), 1.0
+                )
+                metrics["tactile_part_aux_parts"] = f32(parts_count)
+                pred_mean = pred_part.mean()
+                energy_mae = jnp.abs(pred_mean[..., 0] - part_tokens[..., 0])
+                active_mae = jnp.abs(pred_mean[..., 2] - part_tokens[..., 2])
+                valid_part = valid[:, :, None, None]
+                part_norm = valid.sum() * parts_count * energy_mae.shape[2]
+                metrics["tactile_part_aux_energy_mae"] = (
+                    energy_mae * valid_part
+                ).sum() / jnp.maximum(part_norm, 1.0)
+                metrics["tactile_part_aux_active_mae"] = (
+                    active_mae * valid_part
+                ).sum() / jnp.maximum(part_norm, 1.0)
 
         if self.contact_aux_heads:
             label_keys = [key for key in self.contact_aux_keys if key in data]
@@ -725,6 +785,18 @@ class WorldModel(nj.Module):
             report[f"contact_probe/{name}_pos_rate"] = test_y.mean()
             report[f"contact_probe/{name}_base_acc"] = base
         return report
+
+    def _tactile_part_tokens(self, tactile, parts, threshold):
+        flat = tactile.reshape((*tactile.shape[:3], -1)).astype(f32)
+        pad = (-flat.shape[-1]) % parts
+        if pad:
+            flat = jnp.pad(flat, [(0, 0), (0, 0), (0, 0), (0, pad)])
+        chunks = flat.reshape((*flat.shape[:-1], parts, -1))
+        abs_chunks = jnp.abs(chunks)
+        energy = abs_chunks.mean(axis=-1)
+        peak = abs_chunks.max(axis=-1)
+        active = (abs_chunks > threshold).astype(f32).mean(axis=-1)
+        return jnp.stack([energy, peak, active], axis=-1)
 
     def _metrics(self, data, dists, states, stats, losses, model_loss):
         metrics = {}

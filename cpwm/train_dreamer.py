@@ -30,6 +30,9 @@ def main() -> None:
     ap.add_argument("--tactile_mask_prob", type=float, default=0.25)
     ap.add_argument("--tactile_aux_groups", type=int, default=8)
     ap.add_argument("--tactile_group_aux_weight", type=float, default=0.0)
+    ap.add_argument("--tactile_part_aux_weight", type=float, default=0.0)
+    ap.add_argument("--tactile_part_aux_parts", type=int, default=8)
+    ap.add_argument("--tactile_part_aux_threshold", type=float, default=1e-4)
     ap.add_argument(
         "--no_tactile_aux_action",
         action="store_true",
@@ -56,6 +59,9 @@ def main() -> None:
     ap.add_argument("--contact_aux_ensemble", type=int, default=1)
     ap.add_argument("--contact_imagine_weight", type=float, default=0.0)
     ap.add_argument("--logdir", required=True)
+    ap.add_argument("--configs", default="humanoid_benchmark")
+    ap.add_argument("--from_checkpoint", default="")
+    ap.add_argument("--pretrain_world_model_only", action="store_true")
     ap.add_argument("--jax_platform", default="gpu")
     ap.add_argument(
         "--sensors",
@@ -89,12 +95,15 @@ def main() -> None:
 
     cmd = [
         sys.executable, "-m", "embodied.agents.dreamerv3.train",
-        "--configs", "humanoid_benchmark",
+        "--configs", args.configs,
         "--seed", str(args.seed),
         "--task", task,
         "--logdir", args.logdir,
         "--run.steps", str(args.steps),
         "--run.num_envs", str(args.num_envs),
+        "--run.from_checkpoint", args.from_checkpoint,
+        "--run.train_wm", "True",
+        "--run.train_ac", str(not args.pretrain_world_model_only),
         "--jax.platform", args.jax_platform,
         "--env.humanoid.obs_key", "dict",
         "--env.humanoid.obs_wrapper", "True",
@@ -127,7 +136,11 @@ def main() -> None:
             "--decoder.mlp_keys", "^(?!image$).*",
         ]
 
-    if args.tactile_aux_weight > 0 or args.tactile_group_aux_weight > 0:
+    if (
+        args.tactile_aux_weight > 0
+        or args.tactile_group_aux_weight > 0
+        or args.tactile_part_aux_weight > 0
+    ):
         cmd += [
             "--tactile_aux_mode", args.tactile_aux_mode,
             "--tactile_aux_horizon", str(args.tactile_aux_horizon),
@@ -141,6 +154,12 @@ def main() -> None:
         cmd += [
             "--tactile_group_aux_weight", str(args.tactile_group_aux_weight),
             "--tactile_aux_groups", str(args.tactile_aux_groups),
+        ]
+    if args.tactile_part_aux_weight > 0:
+        cmd += [
+            "--tactile_part_aux_weight", str(args.tactile_part_aux_weight),
+            "--tactile_part_aux_parts", str(args.tactile_part_aux_parts),
+            "--tactile_part_aux_threshold", str(args.tactile_part_aux_threshold),
         ]
     if args.contact_aux_weight > 0:
         cmd += [

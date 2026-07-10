@@ -15,6 +15,7 @@ Core comparison:
 - Dreamer tactile + semantic future contact auxiliary loss
 - Dreamer tactile + combined tactile and contact auxiliary losses
 - Dreamer tactile ablations: current tactile reconstruction, multi-step future tactile prediction, and no-action future tactile prediction
+- Dreamer frontier variants with masked tactile modeling, rich contact labels, imagined contact consistency, and Body Contact Token prediction
 
 Active tasks:
 - `h1touch-walk-v0`
@@ -53,6 +54,11 @@ Dreamer evaluation rollouts also log held-out `report_eval/contact_probe/*` metr
     setup_env.sh
  run_all.sh
  run_frontier.sh
+ run_pretrain_frontier.sh
+ run_scaling_frontier.sh
+ run_transfer_eval.sh
+ run_rgb_smoke.sh
+ run_strong_baselines.sh
  run_debug.sh
  pyproject.toml
  requirements.txt
@@ -149,9 +155,9 @@ Default pilot variants:
 ## Frontier Run
 
 `run_frontier.sh` is the focused high-capability matrix. It keeps the regular
-pipeline but adds masked tactile modeling, grouped tactile summaries, richer
-semantic contact labels, class-balanced contact losses, contact-head ensembles,
-and imagined-prior contact consistency:
+pipeline but adds masked tactile modeling, grouped tactile summaries, Body
+Contact Token prediction, richer semantic contact labels, class-balanced
+contact losses, contact-head ensembles, and imagined-prior contact consistency:
 
 ```bash
 bash run_frontier.sh
@@ -164,13 +170,40 @@ Default frontier variants:
 - `both`: tactile plus semantic contact prediction
 - `masked`: masked tactile reconstruction from latent state
 - `tactile_group`: grouped tactile activity prediction
+- `part_tokens`: Body Contact Token tactile activity prediction
 - `contact_frontier`: rich class-balanced contact-onset ensemble plus imagined consistency
 - `frontier`: masked tactile plus grouped tactile plus rich contact frontier objective
+- `frontier_bct`: `frontier` plus Body Contact Token prediction
 
 Optional RGB frontier run:
 
 ```bash
-DREAMER_VARIANTS="frontier_rgb" bash run_frontier.sh
+DREAMER_VARIANTS="frontier_rgb_bct" bash run_frontier.sh
+```
+
+Frontier support scripts:
+
+```bash
+bash run_pretrain_frontier.sh
+bash run_scaling_frontier.sh
+bash run_transfer_eval.sh
+bash run_rgb_smoke.sh
+bash run_strong_baselines.sh
+```
+
+- `run_pretrain_frontier.sh` disables actor-critic updates and trains the multimodal world model stage only.
+- `run_scaling_frontier.sh` sweeps training budgets and Dreamer model sizes.
+- `run_transfer_eval.sh` evaluates trained checkpoints under heavier sensory and dynamics shifts without retraining.
+- `run_rgb_smoke.sh` is a bounded RGB command-path check for `frontier_rgb_bct`.
+- `run_strong_baselines.sh` runs larger Dreamer baselines plus PPO references.
+
+To fine-tune from a pretrained world-model checkpoint, pass it through the common launcher:
+
+```bash
+FROM_CHECKPOINT=outputs/runs_pretrain_frontier/h1touch-door-v0_frontier_bct_s0/checkpoint.ckpt \
+DREAMER_TASKS="h1touch-door-v0" \
+DREAMER_VARIANTS="frontier_bct" \
+bash run_frontier.sh
 ```
 
 Useful debug overrides:
@@ -259,6 +292,7 @@ Default full-run coverage:
   - `future5`: five-step future tactile prediction
   - `masked`: masked tactile reconstruction from world-model latent state
   - `tactile_group`: future tactile plus grouped tactile activity prediction
+  - `part_tokens`: Body Contact Token prediction over deterministic body-part tactile tokens
   - `noact` or `future1_noact`: one-step future tactile prediction without action conditioning
   - `contact` or `contact1`: one-step future contact-label prediction
   - `contact3`: three-step future contact-label prediction
@@ -270,6 +304,8 @@ Default full-run coverage:
   - `both_change` or `aux_contact_change`: combined tactile and contact-change prediction
   - `frontier`: masked tactile, grouped tactile, rich contact onset, class balancing, ensemble disagreement, and imagined consistency
   - `frontier_rgb`: `frontier` with tactile and RGB observations
+  - `frontier_bct`: `frontier` with Body Contact Token prediction
+  - `frontier_rgb_bct`: `frontier_bct` with tactile and RGB observations
 
 ## Calibration
 
@@ -419,6 +455,28 @@ python cpwm/train_dreamer.py \
   --contact_aux_ensemble 4 \
   --contact_imagine_weight 0.05 \
   --logdir outputs/runs/h1touch-door-v0_frontier_s0
+```
+
+Train the Body Contact Token frontier objective:
+
+```bash
+python cpwm/train_dreamer.py \
+  --env h1touch-door-v0 \
+  --seed 0 \
+  --steps 2000000 \
+  --num_envs 4 \
+  --tactile_aux_weight 0.1 \
+  --tactile_aux_mode masked \
+  --tactile_group_aux_weight 0.05 \
+  --tactile_part_aux_weight 0.05 \
+  --tactile_part_aux_parts 8 \
+  --contact_aux_weight 0.1 \
+  --contact_aux_mode onset \
+  --contact_aux_balanced \
+  --contact_aux_rich_labels \
+  --contact_aux_ensemble 4 \
+  --contact_imagine_weight 0.05 \
+  --logdir outputs/runs/h1touch-door-v0_frontier_bct_s0
 ```
 
 Train ablation variants:

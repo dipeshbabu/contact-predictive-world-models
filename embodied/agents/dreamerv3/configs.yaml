@@ -39,6 +39,8 @@ defaults:
     eval_eps: 1
     eval_samples: 1
     train_ratio: 32.0
+    train_wm: True
+    train_ac: True
     train_fill: 0
     eval_fill: 0
     log_zeros: True
@@ -126,6 +128,10 @@ defaults:
   tactile_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
   tactile_group_aux_weight: 0.0
   tactile_group_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
+  tactile_part_aux_weight: 0.0
+  tactile_part_aux_parts: 8
+  tactile_part_aux_threshold: 1e-4
+  tactile_part_aux_head: {layers: 2, units: 256, dist: symlog_mse, act: silu, norm: layer}
   contact_aux_weight: 0.0
   contact_aux_mode: future  # future|current|onset|change
   contact_aux_horizon: 1
